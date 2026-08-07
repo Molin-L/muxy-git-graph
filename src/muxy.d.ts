@@ -102,6 +102,9 @@ export interface MuxyApi {
   };
   events: {
     subscribe(event: string, handler: (payload: unknown) => void): () => void;
+    /** `extension.*` only. A webview emit relays through background.js and
+     *  rejects when no background script is running. */
+    emit(event: string, payload: unknown): Promise<void>;
   };
   theme: MuxyTheme;
   /** The payload this surface was opened with, or its manifest defaultData. */

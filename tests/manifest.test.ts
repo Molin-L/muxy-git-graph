@@ -122,3 +122,10 @@ test("the marketplace block carries an icon and at least one screenshot", () => 
   assert.ok(manifest.marketplace.screenshots.length >= 1,
     "the schema sets minItems: 1 — an empty array fails validation");
 });
+
+test("the background exec relay is declared and shipped", () => {
+  assert.equal(manifest.background, "background.js",
+    "without background.js there is no context whose exec can reach a remote workspace");
+  assert.ok(fs.existsSync(path.join(root, "public/background.js")),
+    "public/ files are copied verbatim into dist, which is what the manifest references");
+});

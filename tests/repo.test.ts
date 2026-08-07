@@ -431,3 +431,133 @@ test("without a shell, working-tree diffs still come from muxy.git", async () =>
     repo.resetCapabilities();
   }
 });
+
+test("remote workspace: the ladder lands on the background relay and everything works", async () => {
+  const repo = await import("../src/data/repo.ts");
+  const muxy = (globalThis as Record<string, unknown>).muxy as Record<string, unknown>;
+  const realExec = muxy.exec;
+  const realGit = muxy.git;
+  const realEvents = (muxy as { events?: unknown }).events;
+  repo.resetCapabilities();
+
+  const REMOTE_ROOT = "/home/dev/projects/gateway";
+  const FLD = String.fromCharCode(0x1f);
+
+  // Webview exec: fails the way the user's machine actually fails.
+  muxy.exec = (command: unknown) => {
+    const isObject = !Array.isArray(command);
+    if (isObject && (command as { cwd?: string }).cwd !== undefined) {
+      return Promise.resolve({
+        stdout: "", exitCode: 1,
+        stderr: `/bin/sh: line 0: cd: ${REMOTE_ROOT}: No such file or directory`,
+      });
+    }
+    return Promise.reject(new Error("exec failed to launch: spawn process: No such file or directory"));
+  };
+
+  // The relay: answered by a pretend background whose exec runs on the remote.
+  const handlers: Array<(p: unknown) => void> = [];
+  const remoteExec = (argv: string[] | { shell: string }): { stdout: string; stderr: string; exitCode: number } => {
+    const joined = Array.isArray(argv) ? argv.join(" ") : argv.shell;
+    if (joined === "git rev-parse --show-toplevel") return { stdout: `${REMOTE_ROOT}\n`, stderr: "", exitCode: 0 };
+    if (joined.startsWith("git show --no-patch")) {
+      return {
+        stdout: ["h", "p1 p2", "Remote User", "r@x", "2026-01-01", "Remote User", "r@x", "2026-01-01", "full body"].join(FLD),
+        stderr: "", exitCode: 0,
+      };
+    }
+    if (joined.startsWith("git diff-tree")) return { stdout: "M\tsrc/app.ts\n", stderr: "", exitCode: 0 };
+    if (joined.startsWith("git show --format=")) return { stdout: "diff --git a/src/app.ts b/src/app.ts\n@@ -1 +1 @@\n-a\n+b\n", stderr: "", exitCode: 0 };
+    if (joined.includes("MERGE_HEAD")) return { stdout: "", stderr: "", exitCode: 1 };
+    return { stdout: "", stderr: "", exitCode: 0 };
+  };
+  muxy.events = {
+    subscribe: (_c: string, h: (p: unknown) => void) => { handlers.push(h); return () => {}; },
+    emit: (_c: string, payload: unknown) => {
+      const p = payload as { kind?: string; id?: string; argv?: string[]; shell?: string };
+      if (p.kind === "exec" && p.id) {
+        const res = remoteExec(p.argv ?? { shell: p.shell ?? "" });
+        for (const h of [...handlers]) {
+          if (res.stdout) h({ kind: "exec-chunk", id: p.id, stream: "out", seq: 0, data: res.stdout });
+          if (res.stderr) h({ kind: "exec-chunk", id: p.id, stream: "err", seq: 0, data: res.stderr });
+          h({ kind: "exec-done", id: p.id, exitCode: res.exitCode,
+              outChunks: res.stdout ? 1 : 0, errChunks: res.stderr ? 1 : 0 });
+        }
+      }
+      return Promise.resolve();
+    },
+  };
+  muxy.git = {
+    repoInfo: () => Promise.resolve({ root: REMOTE_ROOT, gitDir: "", isWorktree: false, currentBranch: "main" }),
+    log: () => Promise.resolve([]),
+    status: () => Promise.resolve({ branch: "main", stagedFiles: [], unstagedFiles: [] }),
+  };
+
+  try {
+    const details = await repo.commitDetails("a".repeat(40));
+    assert.equal(repo.transportKind(), "background", "the ladder settles on the relay");
+    assert.ok(!repo.isDegraded(), "not degraded — full features");
+    assert.equal(details.authorName, "Remote User");
+    assert.equal(details.body, "full body");
+    assert.deepEqual(details.files, [{ status: "M", path: "src/app.ts" }],
+      "per-commit file lists work on the remote");
+
+    const patch = await repo.fileDiff("a".repeat(40), "src/app.ts");
+    assert.match(patch, /^diff --git/, "per-commit diffs work on the remote");
+
+    assert.equal(await repo.pendingOperation(), null, "the shell probe rides the relay too");
+
+    const report = repo.probeReport();
+    assert.deepEqual(report.map((a) => [a.rung, a.ok]),
+      [["direct", false], ["shellCwd", false], ["background", true]]);
+  } finally {
+    muxy.exec = realExec;
+    muxy.git = realGit;
+    (muxy as { events?: unknown }).events = realEvents;
+    repo.resetCapabilities();
+  }
+});
+
+test("a relay that reaches the wrong repository is refused", async () => {
+  const repo = await import("../src/data/repo.ts");
+  const muxy = (globalThis as Record<string, unknown>).muxy as Record<string, unknown>;
+  const realExec = muxy.exec;
+  const realGit = muxy.git;
+  const realEvents = (muxy as { events?: unknown }).events;
+  repo.resetCapabilities();
+
+  muxy.exec = () => Promise.reject(new Error("exec failed to launch: spawn process: No such file or directory"));
+  const handlers: Array<(p: unknown) => void> = [];
+  muxy.events = {
+    subscribe: (_c: string, h: (p: unknown) => void) => { handlers.push(h); return () => {}; },
+    emit: (_c: string, payload: unknown) => {
+      const p = payload as { kind?: string; id?: string };
+      if (p.kind === "exec" && p.id) {
+        // A background exec that ran locally in some other repository.
+        for (const h of [...handlers]) {
+          h({ kind: "exec-chunk", id: p.id, stream: "out", seq: 0, data: "/Users/molin/some/local/repo\n" });
+          h({ kind: "exec-done", id: p.id, exitCode: 0, outChunks: 1, errChunks: 0 });
+        }
+      }
+      return Promise.resolve();
+    },
+  };
+  muxy.git = {
+    repoInfo: () => Promise.resolve({ root: "/home/dev/projects/gateway", gitDir: "", isWorktree: false, currentBranch: "main" }),
+    log: () => Promise.resolve([]),
+    status: () => Promise.resolve({ branch: "main", stagedFiles: [], unstagedFiles: [] }),
+  };
+
+  try {
+    await repo.loadCommits(10).catch(() => undefined);
+    assert.ok(repo.isDegraded(), "wrong repo means refuse the relay, degrade to muxy.git");
+    const background = repo.probeReport().find((a) => a.rung === "background");
+    assert.ok(background && !background.ok);
+    assert.match(background.detail, /wrong repository/);
+  } finally {
+    muxy.exec = realExec;
+    muxy.git = realGit;
+    (muxy as { events?: unknown }).events = realEvents;
+    repo.resetCapabilities();
+  }
+});

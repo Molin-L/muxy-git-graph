@@ -70,6 +70,17 @@ Fourteen ADRs in [`docs/adr/`](./docs/adr/). The ones that will surprise you:
 - **[0014](./docs/adr/0014-right-panel-not-tab.md)** — right panel, superseding the
   tab decision in ADR-0003.
 
+## Remote (SSH) workspaces
+
+Webview `muxy.exec` always spawns on the machine running Muxy, so it cannot reach a
+remote worktree. The extension ships a `background.js` exec relay: the background
+context is the one Muxy documents as running exec on the remote server, and every
+git command rides it when the webview's own exec cannot reach the repository
+([ADR-0017](./docs/adr/0017-background-exec-relay.md)). If the relay cannot reach
+the right repository either, the panel degrades to read-only history via
+`muxy.git`, and the probe report is persisted to
+`storage["diagnostics.lastProbe"]` for diagnosis.
+
 ## Not yet built
 
 The find widget (`⌘F`), the repository settings widget (remotes, issue linking),

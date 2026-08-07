@@ -1,5 +1,10 @@
 # No `background.js`
 
+> **Partially superseded by [ADR-0017](./0017-background-exec-relay.md):** a
+> background script now exists, but solely as an exec relay for workspaces the
+> webview's exec cannot reach. The reasoning below still governs everything else —
+> no durable event handling, no shared state, no logic in the background.
+
 The extension ships no background script. The Graph Tab and the diff-viewer tab do
 all the work, including the ref-digest poll from ADR-0008 — which is deliberately
 tab-local, since it only runs while the tab is focused and has nothing to do when it

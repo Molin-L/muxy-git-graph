@@ -5,6 +5,7 @@
  */
 
 import type { ExecResult } from "../muxy.d.ts";
+import { execViaBackground } from "./background-rpc.ts";
 import * as remote from "./remote.ts";
 
 const REC = "\u001e";
@@ -84,16 +85,19 @@ const EXEC_TIMEOUT_MS = 30_000;
 /**
  * How commands reach git, cheapest first:
  *
- * - `direct`   — plain `muxy.exec(argv)`. Works when Muxy's spawn cwd is valid.
- * - `shellCwd` — `muxy.exec({shell: "cd <path> && …"})`. Muxy hands the project
- *   path through as the spawn cwd with `~` unexpanded, which no `spawn` can
- *   resolve; running it through a shell expands it. Still Muxy's own exec.
- * - `ssh`      — tunnel ourselves. Only if Muxy's exec cannot reach the worktree
- *   at all (see ADR-0016).
+ * - `direct`     — plain `muxy.exec(argv)` from this webview. Local spawn; works
+ *   whenever Muxy's spawn cwd is valid, i.e. every local workspace.
+ * - `shellCwd`   — the same exec through a shell with an explicit cwd, for local
+ *   workspaces whose project path the spawn cwd cannot resolve.
+ * - `background` — relayed to `background.js` over the extension event channel.
+ *   Webview exec always spawns on the machine running Muxy, but the background
+ *   context is the one Muxy documents as running exec on the remote server for a
+ *   remote SSH workspace. See docs/adr/0017-background-exec-relay.md.
  */
 type Transport =
   | { kind: "direct" }
-  | { kind: "shellCwd"; path: string };
+  | { kind: "shellCwd"; path: string }
+  | { kind: "background" };
 
 let transportMode: Transport = { kind: "direct" };
 
@@ -102,6 +106,7 @@ function transport(
 ): string[] | { shell: string; cwd?: string } {
   switch (transportMode.kind) {
     case "direct":
+    case "background":
       return command;
     case "shellCwd":
       return {
@@ -123,6 +128,9 @@ function transport(
 const SAFE_CWD = "/";
 
 function exec(command: string[] | { shell: string }): Promise<ExecResult> {
+  // The relay owns its own timeout and correlation; nothing below applies to it.
+  if (transportMode.kind === "background") return execViaBackground(command);
+
   const label = Array.isArray(command) ? command.join(" ") : command.shell;
   const sent = transport(command);
   return new Promise((resolve, reject) => {
@@ -313,13 +321,56 @@ async function runProbe(): Promise<boolean> {
     if (await gitRuns("shellCwd")) return settle({ kind: "shellCwd", path: root });
   }
 
-  // exec runs on the machine hosting Muxy, so a remote worktree is out of its
-  // reach entirely. `muxy.git` follows the workspace, so that becomes the source.
+  // 3. Relay through background.js, whose exec Muxy documents as running on the
+  //    remote server for a remote SSH workspace — the one context that can reach
+  //    a worktree the webview's local spawn cannot.
+  transportMode = { kind: "background" };
+  if (await backgroundReachesRepo(root)) return settle({ kind: "background" });
+
+  // Nothing can run git here. `muxy.git` follows the workspace, so that becomes
+  // the read-only source.
   transportMode = { kind: "direct" };
   execUsable = false;
   awaitingRemoteSetup = false;
   void persistDiagnostics();
   return false;
+}
+
+/**
+ * The background probe must prove more than "a git ran": if the background host
+ * were to spawn locally in some directory that happens to be a repository, its
+ * answers would silently describe the wrong repo. `--show-toplevel` has to match
+ * the root `muxy.git` reports for the active workspace.
+ */
+async function backgroundReachesRepo(root: string | null): Promise<boolean> {
+  const sent = "git rev-parse --show-toplevel (via background.js)";
+  try {
+    const res = await exec(["git", "rev-parse", "--show-toplevel"]);
+    const toplevel = res.stdout.trim();
+    if (res.exitCode !== 0 || toplevel === "") {
+      probeLog.push({
+        rung: "background", sent, ok: false,
+        detail: res.stderr.trim() || `exit ${res.exitCode}`,
+      });
+      return false;
+    }
+    const trim = (p: string): string => p.replace(/\/+$/, "");
+    if (root !== null && trim(toplevel) !== trim(root)) {
+      probeLog.push({
+        rung: "background", sent, ok: false,
+        detail: `reached ${toplevel}, but the active workspace is ${root} — refusing to show the wrong repository`,
+      });
+      return false;
+    }
+    probeLog.push({ rung: "background", sent, ok: true, detail: toplevel });
+    return true;
+  } catch (err) {
+    probeLog.push({
+      rung: "background", sent, ok: false,
+      detail: err instanceof Error ? err.message : String(err),
+    });
+    return false;
+  }
 }
 
 /**
