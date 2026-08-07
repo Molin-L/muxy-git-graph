@@ -411,7 +411,8 @@ export class Panel {
       const details = await repo.commitDetails(commit.hash, commit);
       renderCommitDetails(this.detailsHost, details, this.detailsHandlers(commit.hash, null), null,
         repo.isDegraded() && commit.hash !== UNCOMMITTED
-          ? "File changes need a local workspace — muxy.exec cannot reach this worktree."
+          ? "Per-commit file changes need a shell. muxy.git can only diff the working " +
+            "tree — no Muxy extension can list a commit's files on this workspace."
           : undefined);
     } catch (err) {
       this.detailsHost.replaceChildren(

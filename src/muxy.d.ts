@@ -45,6 +45,14 @@ export interface MuxyGit {
   repoInfo(options?: { fresh?: boolean }): Promise<RepoInfo>;
   log(options?: { maxCount?: number; skip?: number; fresh?: boolean }): Promise<GitLogEntry[]>;
   status(options?: { local?: boolean; fresh?: boolean }): Promise<GitStatus>;
+  /** Working tree only — the bridge accepts no ref, so a commit cannot be diffed. */
+  diff(options: {
+    filePath?: string;
+    raw?: boolean;
+    staged?: boolean;
+    lineLimit?: number;
+    fresh?: boolean;
+  }): Promise<{ diff: string; truncated: boolean }>;
   checkout(args: { hash: string }): Promise<void>;
   cherryPick(args: { hash: string }): Promise<void>;
   revert(args: { hash: string }): Promise<void>;

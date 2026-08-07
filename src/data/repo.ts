@@ -659,7 +659,18 @@ function parseNameStatus(out: string): ChangedFile[] {
 }
 
 export async function fileDiff(hash: string, path: string, oldPath?: string): Promise<string> {
-  if (!(await probeExec())) throw degradedError("Viewing diffs");
+  if (!(await probeExec())) {
+    // `muxy.git.diff` has no ref parameter — working tree only — but that is
+    // exactly the case that matters without a shell, and it follows the workspace.
+    if (hash === UNCOMMITTED) {
+      const staged = await api().git.diff({ filePath: path, raw: true, staged: true })
+        .catch(() => null);
+      if (staged !== null && staged.diff.trim() !== "") return staged.diff;
+      const working = await api().git.diff({ filePath: path, raw: true });
+      return working.diff;
+    }
+    throw degradedError("Diffing a commit");
+  }
   const paths = oldPath ? ["--", oldPath, path] : ["--", path];
   if (hash === UNCOMMITTED) {
     const tracked = await tryRun(["git", "diff", "HEAD", "--no-color", "-M", ...paths]);

@@ -394,3 +394,40 @@ test("concurrent readers share a single probe", async () => {
     repo.resetCapabilities();
   }
 });
+
+test("without a shell, working-tree diffs still come from muxy.git", async () => {
+  const repo = await import("../src/data/repo.ts");
+  const muxy = (globalThis as Record<string, unknown>).muxy as Record<string, unknown>;
+  const realExec = muxy.exec;
+  const realGit = muxy.git;
+  repo.resetCapabilities();
+
+  const asked: Array<Record<string, unknown>> = [];
+  muxy.exec = () => Promise.reject(new Error("exec failed to launch: spawn process: No such file or directory"));
+  muxy.git = {
+    repoInfo: () => Promise.resolve({ root: "/home/dev/x", gitDir: "", isWorktree: false, currentBranch: "main" }),
+    log: () => Promise.resolve([]),
+    status: () => Promise.resolve({ branch: "main", stagedFiles: [], unstagedFiles: [] }),
+    diff: (o: Record<string, unknown>) => {
+      asked.push(o);
+      return Promise.resolve({
+        diff: o.staged === true ? "" : "diff --git a/x b/x\n@@ -1 +1 @@\n-a\n+b\n",
+        truncated: false,
+      });
+    },
+  };
+
+  try {
+    const patch = await repo.fileDiff("*", "x");
+    assert.match(patch, /^diff --git/, "the working-tree diff is real, not a placeholder");
+    assert.equal(asked[0]?.staged, true, "staged is preferred, then the working tree");
+    assert.equal(asked[0]?.raw, true);
+
+    // A commit cannot be diffed: the bridge exposes no ref parameter.
+    await assert.rejects(() => repo.fileDiff("abc123", "x"), /shell/);
+  } finally {
+    muxy.exec = realExec;
+    muxy.git = realGit;
+    repo.resetCapabilities();
+  }
+});
