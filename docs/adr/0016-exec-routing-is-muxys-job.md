@@ -26,6 +26,28 @@ If both fail, the workspace is not reachable and there is nothing the extension 
 legitimately do. It says so precisely and records the probe to
 `storage["diagnostics.lastProbe"]` for a bug report against Muxy.
 
+## Measured: exec runs locally, always
+
+The docs say exec runs on the remote server for a remote workspace. It does not.
+With `cwd` finally reaching the payload, the shell rung produced:
+
+```
+/bin/sh: line 0: cd: /home/dev/projects/gateway: No such file or directory
+```
+
+`sh` launched and then failed to `cd`. That can only happen if the shell ran on the
+Mac. So `muxy.exec` is local regardless of workspace, and no cwd or shell
+arrangement can reach a remote worktree.
+
+**`muxy.git` is therefore the primary data source, not a fallback** — which is what
+Muxy's own git extension relies on, and why it works on a remote. On such a
+workspace the panel reads history through `muxy.git.log` and `muxy.git.status`, and
+says "read-only · no shell on this workspace" in the status line rather than showing
+an error. The graph, refs, branches, tags and the uncommitted row are all real.
+Commit details render from the log entry the panel already holds; file lists and
+diffs are unavailable because `muxy.git` has no commit-diff method, and the pane
+says so instead of claiming there were no changes.
+
 ## Evidence gathered
 
 - On the remote host, `git` is at `/usr/bin/git` and on the default non-interactive

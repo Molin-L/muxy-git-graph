@@ -300,8 +300,15 @@ test("falls back to muxy.git when exec cannot spawn (remote workspace)", async (
     const details = await repo.commitDetails("*");
     assert.deepEqual(details.files.map((f) => f.path).sort(), ["dirty.txt", "staged.txt"]);
 
-    // Features that genuinely need a shell fail with a clear message.
-    await assert.rejects(() => repo.commitDetails("a".repeat(40)), /shell access/);
+    // Commit details still render from the log entry the caller already holds —
+    // there is no shell to list files with, but the metadata is real.
+    const known = state.commits.find((c) => c.hash === "a".repeat(40))!;
+    const detail = await repo.commitDetails("a".repeat(40), known);
+    assert.equal(detail.authorName, "Remote User");
+    assert.deepEqual(detail.parents, ["b".repeat(40)]);
+    assert.deepEqual(detail.files, [], "no shell means no file list, but no error either");
+
+    // Diffs genuinely cannot work and say so.
     await assert.rejects(() => repo.fileDiff("a".repeat(40), "x.txt"), /shell access/);
     assert.deepEqual(await repo.remotes(), []);
     assert.equal(await repo.pendingOperation(), null);

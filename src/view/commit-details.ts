@@ -25,6 +25,8 @@ export function renderCommitDetails(
   details: CommitDetails,
   handlers: DetailsHandlers,
   comparison: { from: string; to: string } | null,
+  /** Shown instead of "No file changes" when files are unavailable, not absent. */
+  filesNote?: string,
 ): void {
   host.replaceChildren();
 
@@ -65,10 +67,12 @@ export function renderCommitDetails(
   }
 
   const filesPane = el("div", "details__files");
-  filesPane.appendChild(el("div", "details__filecount",
-    `${details.files.length} file${details.files.length === 1 ? "" : "s"} changed`));
+  if (filesNote === undefined || details.files.length > 0) {
+    filesPane.appendChild(el("div", "details__filecount",
+      `${details.files.length} file${details.files.length === 1 ? "" : "s"} changed`));
+  }
   if (details.files.length === 0) {
-    filesPane.appendChild(el("div", "details__empty", "No file changes."));
+    filesPane.appendChild(el("div", "details__empty", filesNote ?? "No file changes."));
   }
   for (const file of details.files) filesPane.appendChild(fileRow(file, handlers));
 

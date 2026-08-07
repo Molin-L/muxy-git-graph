@@ -313,9 +313,11 @@ async function runProbe(): Promise<boolean> {
     if (await gitRuns("shellCwd")) return settle({ kind: "shellCwd", path: root });
   }
 
+  // exec runs on the machine hosting Muxy, so a remote worktree is out of its
+  // reach entirely. `muxy.git` follows the workspace, so that becomes the source.
   transportMode = { kind: "direct" };
   execUsable = false;
-  awaitingRemoteSetup = true;
+  awaitingRemoteSetup = false;
   void persistDiagnostics();
   return false;
 }
@@ -532,10 +534,10 @@ export async function currentBranch(): Promise<string> {
   return info?.currentBranch ?? "HEAD";
 }
 
-export async function commitDetails(hash: string): Promise<CommitDetails> {
+export async function commitDetails(hash: string, known?: Commit): Promise<CommitDetails> {
   if (!(await probeExec())) {
     if (hash === UNCOMMITTED) return uncommittedDetailsViaApi();
-    throw degradedError("Commit details");
+    return detailsFromLogEntry(hash, known);
   }
   if (hash === UNCOMMITTED) return uncommittedDetails();
 
@@ -552,6 +554,26 @@ export async function commitDetails(hash: string): Promise<CommitDetails> {
     committerDate: meta[7] ?? "",
     body: (meta[8] ?? "").trim(),
     files,
+  };
+}
+
+/**
+ * Without a shell there is no way to list a commit's files — `muxy.git` has no
+ * commit-diff method — but everything already carried on the log entry is real, so
+ * the pane shows that rather than an error.
+ */
+function detailsFromLogEntry(hash: string, known?: Commit): CommitDetails {
+  return {
+    hash,
+    parents: known?.parents ?? [],
+    authorName: known?.authorName ?? "",
+    authorEmail: known?.authorEmail ?? "",
+    authorDate: known?.authorDate ?? "",
+    committerName: known?.authorName ?? "",
+    committerEmail: known?.authorEmail ?? "",
+    committerDate: known?.authorDate ?? "",
+    body: known?.subject ?? "",
+    files: [],
   };
 }
 
