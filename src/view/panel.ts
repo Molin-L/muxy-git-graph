@@ -218,34 +218,19 @@ export class Panel {
   }
 
   /**
-   * `muxy.exec` spawns locally, so a remote worktree path does not exist here.
-   * Rather than run a reduced feature set, ask for the SSH details once and
-   * tunnel every git command over Muxy's existing multiplexed connection.
+   * Muxy routes `exec` to the remote server for a remote workspace. When it does
+   * not, there is nothing the extension can legitimately do about it, so the panel
+   * reports the failure precisely and records it for a bug report.
    */
-  private showRemoteSetupNotice(): void {
-    this.notice.hidden = false;
-    this.notice.classList.add("notice--error");
-    this.notice.replaceChildren(
-      el("span", "notice__text",
-        "Git cannot be run in this worktree — muxy.exec could not reach it, even " +
-        "through a shell. Connect over SSH to use the repository directly."),
-    );
-    const why = el("button", "", "Why?");
-    why.addEventListener("click", () => void this.showProbeReport());
-    const connect = el("button", "dialog__confirm", "Connect over SSH…");
-    connect.addEventListener("click", () => void this.promptRemote());
-    this.notice.append(why, connect);
-  }
-
   /** Exactly what each transport rung tried, and what it got back. */
   private async showProbeReport(): Promise<void> {
     const attempts = repo.probeReport();
     const lines = attempts.length === 0
       ? ["(no attempts recorded)"]
-      : attempts.map((a) => `${a.ok ? "OK  " : "FAIL"}  ${a.rung}\n      sent: ${a.sent}\n      →     ${a.detail}`);
-
-    const info = await globalThis.muxy?.git.repoInfo().catch((err: unknown) =>
-      ({ root: `repoInfo() failed: ${String(err)}`, currentBranch: "" }));
+      : attempts.map((a) =>
+        `${a.ok ? "OK  " : "FAIL"}  ${a.rung}\n      sent: ${a.sent}\n      \u2192     ${a.detail}`);
+    const info = await globalThis.muxy?.git.repoInfo().catch(
+      (err: unknown) => ({ root: `repoInfo() failed: ${String(err)}`, currentBranch: "" }));
 
     await openDialog({
       title: "Why git could not run",
@@ -254,35 +239,17 @@ export class Panel {
     });
   }
 
-  private async promptRemote(): Promise<void> {
-    const info = await globalThis.muxy?.git.repoInfo().catch(() => null);
-    const values = await openDialog({
-      title: "Connect over SSH",
-      message:
-        "Git Graph will run git on the remote host, reusing Muxy's existing SSH " +
-        "connection so no new one is opened.",
-      fields: [
-        { kind: "text", id: "host", label: "SSH host", placeholder: "my-dev-box" },
-        { kind: "text", id: "path", label: "Repository path", value: info?.root ?? "~/" },
-      ],
-      confirmLabel: "Connect",
-    });
-    if (values === null) return;
-
-    const host = String(values.host).trim();
-    const path = String(values.path).trim();
-    if (host === "" || path === "") return;
-
-    this.showNotice(`Connecting to ${host}…`);
-    try {
-      await repo.connectRemote({ host, path });
-      await this.reload();
-    } catch (err) {
-      this.showNotice(err instanceof Error ? err.message : String(err), true);
-      const retry = el("button", "", "Edit…");
-      retry.addEventListener("click", () => void this.promptRemote());
-      this.notice.appendChild(retry);
-    }
+  private showRemoteSetupNotice(): void {
+    this.notice.hidden = false;
+    this.notice.classList.add("notice--error");
+    this.notice.replaceChildren(
+      el("span", "notice__text",
+        "Git cannot be run in this worktree. muxy.exec could not launch a process, " +
+        "even through a shell — so Muxy is not routing it to this workspace."),
+    );
+    const why = el("button", "", "Details");
+    why.addEventListener("click", () => void this.showProbeReport());
+    this.notice.appendChild(why);
   }
 
   private async loadMore(): Promise<void> {

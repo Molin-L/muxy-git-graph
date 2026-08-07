@@ -6,7 +6,6 @@
 
 import type { ExecResult } from "../muxy.d.ts";
 import * as remote from "./remote.ts";
-import type { RemoteTarget } from "./remote.ts";
 
 const REC = "\u001e";
 const FLD = "\u001f";
@@ -94,8 +93,7 @@ const EXEC_TIMEOUT_MS = 30_000;
  */
 type Transport =
   | { kind: "direct" }
-  | { kind: "shellCwd"; path: string }
-  | { kind: "ssh"; target: RemoteTarget };
+  | { kind: "shellCwd"; path: string };
 
 let transportMode: Transport = { kind: "direct" };
 
@@ -106,13 +104,9 @@ function transport(command: string[] | { shell: string }): string[] | { shell: s
     case "shellCwd":
       return {
         shell: Array.isArray(command)
-          ? remote.remoteCommand(command, transportMode.path)
-          : `cd ${remote.quotePath(transportMode.path)} && ${command.shell}`,
+          ? remote.shellCommand(command, transportMode.path)
+          : remote.shellScript(command.shell, transportMode.path),
       };
-    case "ssh":
-      return Array.isArray(command)
-        ? remote.wrapArgv(command, transportMode.target)
-        : remote.wrapShell(command.shell, transportMode.target);
   }
 }
 
@@ -223,7 +217,6 @@ export function resetCapabilities(): void {
   execUsable = null;
   transportMode = { kind: "direct" };
   awaitingRemoteSetup = false;
-  remote.resetMultiplexing();
 }
 
 /** True when the workspace needs an SSH target before anything can run. */
@@ -231,10 +224,6 @@ let awaitingRemoteSetup = false;
 
 export function needsRemoteSetup(): boolean {
   return awaitingRemoteSetup;
-}
-
-export function activeRemote(): RemoteTarget | null {
-  return transportMode.kind === "ssh" ? transportMode.target : null;
 }
 
 /** One rung of the transport ladder, recorded so failures are explainable. */
@@ -303,7 +292,6 @@ async function runProbe(): Promise<boolean> {
 
   // 1. Plain exec, as Muxy intends it.
   transportMode = { kind: "direct" };
-  remote.resetMultiplexing();
   if (await gitRuns("direct")) return settle({ kind: "direct" });
 
   // 2. Same exec, but through a shell so the project path's `~` expands. Muxy
@@ -319,58 +307,28 @@ async function runProbe(): Promise<boolean> {
     if (await gitRuns("shellCwd")) return settle({ kind: "shellCwd", path: root });
   }
 
-  // 3. Tunnel over SSH. The target comes from Muxy's own config where possible,
-  //    so nothing has to be typed; a stored one wins if the user set it by hand.
-  const stored = await remote.loadTarget(await workspaceKey());
-  const discovered = stored ?? await discoverTargetFromMuxyConfig(root);
-  if (discovered !== null) {
-    await adoptHostConfig(discovered.host);
-    transportMode = { kind: "ssh", target: discovered };
-    if (await gitRuns("ssh")) {
-      if (stored === null) await remote.saveTarget(await workspaceKey(), discovered);
-      return settle({ kind: "ssh", target: discovered });
-    }
-  }
-
   transportMode = { kind: "direct" };
   execUsable = false;
   awaitingRemoteSetup = true;
+  void persistDiagnostics();
   return false;
 }
 
 /**
- * Reads Muxy's own `projects.json` / `remote-devices.json` through `exec` — it
- * runs on the machine holding them — and resolves this workspace's SSH host.
+ * Writes the probe result to extension storage. Muxy persists that to disk, which
+ * makes a failed workspace diagnosable without the user having to open a dialog and
+ * read numbers back.
  */
-async function discoverTargetFromMuxyConfig(root: string | null): Promise<RemoteTarget | null> {
-  const previous = transportMode;
-  transportMode = { kind: "shellCwd", path: SAFE_CWD };
+async function persistDiagnostics(): Promise<void> {
   try {
-    const res = await exec({ shell: remote.MUXY_CONFIG_COMMAND });
-    if (res.exitCode !== 0) {
-      probeLog.push({
-        rung: "discover", sent: "read Muxy config", ok: false,
-        detail: res.stderr.trim() || `exit ${res.exitCode}`,
-      });
-      return null;
-    }
-    const found = remote.resolveFromMuxyConfig(res.stdout, root);
-    probeLog.push({
-      rung: "discover", sent: "read Muxy config", ok: found !== null,
-      detail: found !== null
-        ? `${found.host}:${found.path}`
-        : "no remote project in Muxy's config matched this worktree",
+    const info = await api().git.repoInfo().catch(() => null);
+    await globalThis.muxy?.storage.set("diagnostics.lastProbe", {
+      at: new Date().toISOString(),
+      repoInfoRoot: info?.root ?? null,
+      repoInfoBranch: info?.currentBranch ?? null,
+      attempts: probeLog,
     });
-    return found;
-  } catch (err) {
-    probeLog.push({
-      rung: "discover", sent: "read Muxy config", ok: false,
-      detail: err instanceof Error ? err.message : String(err),
-    });
-    return null;
-  } finally {
-    transportMode = previous;
-  }
+  } catch { /* diagnostics must never break the panel */ }
 }
 
 /** The worktree path as Muxy reports it — may be `~`-relative on a remote. */
@@ -383,56 +341,6 @@ async function projectPath(): Promise<string | null> {
 /** Which rung of the ladder is in use, for the status line. */
 export function transportKind(): Transport["kind"] {
   return transportMode.kind;
-}
-
-/**
- * Reads the host's effective SSH config locally (`ssh -G`, no connection) and
- * only imposes our own connection reuse when the user has not configured any.
- */
-async function adoptHostConfig(host: string): Promise<void> {
-  const previous = transportMode;
-  // Runs locally, but still needs a valid spawn cwd, so it is not `direct`.
-  transportMode = { kind: "shellCwd", path: SAFE_CWD };
-  try {
-    const res = await exec(remote.effectiveConfigArgv(host));
-    if (res.exitCode === 0) remote.adoptEffectiveConfig(res.stdout);
-    else remote.fallBackToOwnMaster();
-  } catch {
-    remote.fallBackToOwnMaster();
-  } finally {
-    transportMode = previous;
-  }
-}
-
-/** Adopts an SSH target, verifies it, and remembers it on success. */
-export async function connectRemote(candidate: RemoteTarget): Promise<void> {
-  const previous = transportMode;
-  await adoptHostConfig(candidate.host);
-  transportMode = { kind: "ssh", target: candidate };
-
-  const ok = await gitRuns("ssh");
-  if (!ok) {
-    transportMode = previous;
-    throw new Error(
-      `Could not run git on ${candidate.host}:${candidate.path}. ` +
-      `Check the host resolves in your SSH config and the path exists.`,
-    );
-  }
-
-  const inside = await exec(["git", "rev-parse", "--is-inside-work-tree"]);
-  if (inside.exitCode !== 0 || inside.stdout.trim() !== "true") {
-    transportMode = previous;
-    throw new Error(`${candidate.path} on ${candidate.host} is not a git worktree.`);
-  }
-
-  execUsable = true;
-  awaitingRemoteSetup = false;
-  await remote.saveTarget(await workspaceKey(), candidate);
-}
-
-export async function disconnectRemote(): Promise<void> {
-  await remote.forgetTarget(await workspaceKey());
-  resetCapabilities();
 }
 
 /** Thrown by the features that genuinely cannot work without a local shell. */
