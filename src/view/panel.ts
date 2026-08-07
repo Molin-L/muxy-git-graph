@@ -91,7 +91,12 @@ export class Panel {
   private build(): void {
     const fetchButton = iconButton("Fetch from remotes", "↓", () =>
       this.perform("Fetch", () => write.fetch(true)));
-    const refreshButton = iconButton("Refresh (⌘R)", "⟳", () => this.reload());
+    const refreshButton = iconButton("Refresh (⌘R)", "⟳", () => {
+      // A manual refresh must also re-test the transport: the workspace may have
+      // become remote-capable (or lost it) without any project-switch event.
+      repo.resetCapabilities();
+      void this.reload();
+    });
 
     const topbar = el("div", "topbar");
     topbar.append(this.branchLabel, this.statusLabel, el("span", "topbar__spacer"),
@@ -542,7 +547,16 @@ export class Panel {
     }
 
     // Poll only while the panel is visible — an unfocused panel costs nothing.
-    document.addEventListener("visibilitychange", () => this.updatePolling());
+    document.addEventListener("visibilitychange", () => {
+      // A panel that probed during app startup can hold a stale "no shell"
+      // verdict: the workspace context syncs after the stores load, and no event
+      // reaches a webview for that. Re-probe whenever a degraded panel comes back.
+      if (document.visibilityState === "visible" && repo.isDegraded()) {
+        repo.resetCapabilities();
+        void this.reload();
+      }
+      this.updatePolling();
+    });
     window.addEventListener("focus", () => this.updatePolling());
     window.addEventListener("blur", () => this.updatePolling());
     this.updatePolling();
@@ -577,6 +591,7 @@ export class Panel {
     }
     if (meta && event.key.toLowerCase() === "r") {
       event.preventDefault();
+      repo.resetCapabilities();
       void this.reload();
       return;
     }
