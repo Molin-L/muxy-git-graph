@@ -1,0 +1,514 @@
+:root {
+  --s1: 2px;  --s2: 4px;  --s3: 6px;  --s4: 8px;  --s5: 10px;
+  --s6: 12px; --s7: 16px; --s8: 20px; --s9: 24px; --s10: 32px;
+
+  --font-caption: 10px;
+  --font-footnote: 11px;
+  --font-body: 12px;
+  --font-emphasis: 13px;
+  --font-title: 14px;
+
+  --icon-sm: 12px;
+  --icon: 14px;
+  --control: 24px;
+
+  --radius: 6px;
+  --radius-chip: 4px;
+  --radius-card: 8px;
+
+  --row-height: 24px;
+  --mono: "SF Mono", Menlo, monospace;
+
+  /* Lane palette, derived from the theme so it inverts with it. */
+  --lane-0: var(--muxy-accent);
+  --lane-1: var(--muxy-diff-add);
+  --lane-2: var(--muxy-diff-remove);
+  --lane-3: var(--muxy-diff-hunk);
+  --lane-4: var(--muxy-foreground-muted);
+  --lane-5: var(--muxy-foreground);
+}
+
+* { box-sizing: border-box; }
+
+html, body { margin: 0; height: 100%; overflow: hidden; }
+
+body {
+  background: var(--muxy-background);
+  color: var(--muxy-foreground);
+  font-family: -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
+  font-size: var(--font-body);
+  -webkit-font-smoothing: antialiased;
+}
+
+#root { display: flex; flex-direction: column; height: 100%; }
+
+/* --------------------------------------------------------------- topbar --- */
+
+.topbar {
+  display: flex;
+  align-items: center;
+  gap: var(--s4);
+  height: var(--muxy-topbar-height, 36px);
+  box-sizing: content-box;
+  border-bottom: 1px solid var(--muxy-border);
+  padding: 0 var(--s5);
+  flex: 0 0 auto;
+}
+
+.topbar__title {
+  font-size: var(--font-title);
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.topbar__repo {
+  font-size: var(--font-footnote);
+  color: var(--muxy-foreground-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.topbar__spacer { flex: 1 1 auto; }
+
+button {
+  height: 28px;
+  padding: 0 var(--s5);
+  font: inherit;
+  font-size: var(--font-emphasis);
+  color: var(--muxy-foreground);
+  background: var(--muxy-surface);
+  border: 1px solid var(--muxy-border);
+  border-radius: var(--radius);
+  cursor: pointer;
+}
+
+button:hover:not(:disabled) { background: var(--muxy-hover); border-color: var(--muxy-accent); }
+button:disabled { opacity: 0.4; cursor: default; }
+
+.iconbutton {
+  width: var(--control);
+  height: var(--control);
+  padding: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: var(--icon);
+  font-weight: 600;
+  background: none;
+  border: none;
+}
+
+select, input[type="text"] {
+  height: 28px;
+  padding: 0 var(--s3);
+  font: inherit;
+  font-size: var(--font-emphasis);
+  color: var(--muxy-foreground);
+  background: var(--muxy-surface);
+  border: 1px solid var(--muxy-border);
+  border-radius: var(--radius);
+}
+
+/* --------------------------------------------------------------- banner --- */
+
+.banner {
+  display: flex;
+  align-items: center;
+  gap: var(--s4);
+  padding: var(--s3) var(--s5);
+  border-bottom: 1px solid var(--muxy-border);
+  background: var(--muxy-accent-soft);
+  flex: 0 0 auto;
+}
+
+.banner__text { flex: 1 1 auto; font-size: var(--font-footnote); }
+.banner button { height: 24px; font-size: var(--font-footnote); }
+
+/* Loading / empty / error state. Without this a failed or slow read — the common
+   case on a remote workspace — is indistinguishable from a broken panel. */
+.notice {
+  display: flex;
+  align-items: center;
+  gap: var(--s4);
+  padding: var(--s4) var(--s5);
+  border-bottom: 1px solid var(--muxy-border);
+  background: var(--muxy-surface);
+  flex: 0 0 auto;
+}
+
+.notice[hidden] { display: none; }
+.notice__text { flex: 1 1 auto; font-size: var(--font-footnote); color: var(--muxy-foreground-muted); }
+.notice--error { background: var(--muxy-accent-soft); }
+.notice--error .notice__text { color: var(--muxy-foreground); user-select: text; }
+.notice button { height: 24px; font-size: var(--font-footnote); }
+
+/* ---------------------------------------------------------------- graph --- */
+
+.scroller { flex: 1 1 auto; overflow: auto; position: relative; }
+.content { position: relative; width: 100%; }
+
+/* One template shared by the header and every row, so the columns line up.
+   Hidden columns collapse to 0px rather than being removed, keeping the track
+   count stable across recycled rows. */
+.head,
+.row {
+  display: grid;
+  grid-template-columns:
+    var(--col-graph, 28px)
+    minmax(0, 1fr)
+    var(--col-date, 84px)
+    var(--col-author, 116px)
+    var(--col-hash, 60px);
+  align-items: center;
+  column-gap: var(--s3);
+}
+
+.head {
+  position: sticky;
+  top: 0;
+  z-index: 3;
+  height: 26px;
+  padding-right: var(--s5);
+  border-bottom: 1px solid var(--muxy-border);
+  background: var(--muxy-background);
+  font-size: var(--font-footnote);
+  color: var(--muxy-foreground-muted);
+}
+
+.cell {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cell--desc { display: flex; align-items: center; gap: var(--s3); min-width: 0; }
+
+/* Above the rows (git-graph uses z-index 2 for the same reason): row hover and
+   selection paint behind the lanes rather than over them. */
+.graphclip {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: var(--col-graph, 28px);
+  height: 100%;
+  overflow: hidden;
+  z-index: 2;
+  pointer-events: none;
+}
+
+.graph { position: absolute; top: 0; left: 0; overflow: visible; }
+.graph .line { fill: none; stroke-width: 1.5; stroke-linecap: round; }
+.graph .vertex { stroke-width: 1.5; }
+
+.lane-0 { stroke: var(--lane-0); }
+.lane-1 { stroke: var(--lane-1); }
+.lane-2 { stroke: var(--lane-2); }
+.lane-3 { stroke: var(--lane-3); }
+.lane-4 { stroke: var(--lane-4); }
+.lane-5 { stroke: var(--lane-5); }
+
+.vertex.lane-0 { fill: var(--lane-0); }
+.vertex.lane-1 { fill: var(--lane-1); }
+.vertex.lane-2 { fill: var(--lane-2); }
+.vertex.lane-3 { fill: var(--lane-3); }
+.vertex.lane-4 { fill: var(--lane-4); }
+.vertex.lane-5 { fill: var(--lane-5); }
+
+.line.uncommitted { stroke: var(--muxy-foreground-muted); stroke-dasharray: 2px; }
+.vertex.uncommitted { fill: var(--muxy-foreground-muted); stroke: var(--muxy-foreground-muted); }
+
+/* Must follow the lane fills to win the specificity tie. */
+.graph .vertex.vertex--current { fill: var(--muxy-background); }
+.graph .stash-inner { fill: var(--muxy-background); stroke: none; }
+
+/* ----------------------------------------------------------------- rows --- */
+
+.rows { position: absolute; top: 0; left: 0; right: 0; z-index: 1; }
+
+.row {
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: var(--row-height);
+  padding-right: var(--s5);
+  cursor: pointer;
+  will-change: transform;
+}
+
+.row:hover { background: var(--muxy-hover); }
+.row--selected { background: var(--muxy-hover); box-shadow: inset 2px 0 0 var(--muxy-accent); }
+.row--compare { background: var(--muxy-accent-soft); }
+.row--head .row__subject { font-weight: 600; }
+
+.row__subject {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* No width cap: the chip count is already bounded in JS, and any cap here clips
+   the trailing `+N` chip off the end. The subject absorbs the shrink instead. */
+.row__refs { display: flex; gap: var(--s2); flex: 0 0 auto; min-width: 0; }
+
+.ref {
+  /* Must not shrink. The subject has flex-grow, so any shrink allowance here lets
+     it squeeze every chip down to its floor even when there is ample room. Long
+     names are handled by max-width + ellipsis below; the count is capped in JS. */
+  flex: 0 0 auto;
+  padding: 0 var(--s3);
+  border-radius: var(--radius-chip);
+  font-size: var(--font-caption);
+  font-weight: 600;
+  line-height: 16px;
+  white-space: nowrap;
+  max-width: 120px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  cursor: pointer;
+  background: var(--muxy-accent-soft);
+  color: var(--muxy-accent);
+}
+
+.ref:hover { outline: 1px solid var(--muxy-accent); }
+.ref--tag { background: var(--muxy-surface); color: var(--muxy-diff-add); }
+.ref--remote { background: var(--muxy-surface); color: var(--muxy-foreground-muted); }
+.ref--stash { background: var(--muxy-surface); color: var(--muxy-diff-hunk); }
+
+/* Never shrinks or clips — it is the affordance for everything hidden. */
+.ref--more {
+  background: var(--muxy-surface);
+  color: var(--muxy-foreground-muted);
+  font-family: var(--mono);
+  flex: 0 0 auto;
+  min-width: 0;
+  padding: 0 var(--s2);
+}
+
+.row .cell--date,
+.row .cell--author,
+.row .cell--hash {
+  color: var(--muxy-foreground-muted);
+  font-size: var(--font-footnote);
+}
+
+.cell--hash { font-family: var(--mono); font-size: var(--font-caption); }
+
+/* -------------------------------------------------------------- details --- */
+
+/* Sits below the graph layer, and its content is inset past the Graph column, so
+   the lanes continue visibly down its left edge — as they do in git-graph, where
+   the expansion stretches the branch lines rather than interrupting them. */
+.details {
+  position: absolute;
+  left: 0;
+  right: 0;
+  z-index: 1;
+  overflow: auto;
+  padding: var(--s4) var(--s5) var(--s4) calc(var(--col-graph, 28px) + var(--s3));
+  border-top: 1px solid var(--muxy-border);
+  border-bottom: 1px solid var(--muxy-border);
+  background: var(--muxy-surface);
+}
+
+.details__header { display: flex; align-items: center; gap: var(--s4); flex: 0 0 auto; }
+
+/* Stacked by default; two panes once the panel is wide enough. */
+.details__panes { flex: 1 1 auto; min-height: 0; overflow: auto; }
+.details__divider { display: none; }
+
+/* Must outrank `.details--split { display: flex }`, which otherwise defeats the
+   `hidden` attribute — the UA rule `[hidden] { display: none }` loses on
+   specificity to a class, leaving the pane stuck open. */
+.details[hidden] { display: none; }
+
+.details--split { display: flex; flex-direction: column; overflow: hidden; }
+.details--split .details__panes { display: flex; overflow: hidden; }
+
+.details--split .details__summary {
+  flex: 0 0 var(--cdv-split, 50%);
+  min-width: 0;
+  overflow: auto;
+  padding-right: var(--s4);
+  border-right: 1px solid var(--muxy-border);
+  user-select: text;
+}
+
+.details--split .details__files {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: auto;
+  padding-left: var(--s4);
+}
+
+.details--split .details__divider {
+  display: block;
+  flex: 0 0 auto;
+  width: 5px;
+  margin: 0 -3px;
+  cursor: col-resize;
+  z-index: 1;
+}
+
+.details--split .details__divider:hover { background: var(--muxy-accent-soft); }
+
+body.resizing { cursor: col-resize; user-select: none; }
+.details__title { flex: 1 1 auto; font-family: var(--mono); font-size: var(--font-emphasis); font-weight: 600; }
+.details__close { width: var(--control); height: var(--control); padding: 0; background: none; border: none; }
+
+.details__meta {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: var(--s1) var(--s4);
+  margin: var(--s3) 0 0;
+  font-size: var(--font-footnote);
+}
+
+.details__meta dt { color: var(--muxy-foreground-muted); }
+.details__meta dd { margin: 0; overflow: hidden; text-overflow: ellipsis; }
+
+.details__body {
+  margin: var(--s4) 0 0;
+  padding: var(--s3);
+  border-radius: var(--radius);
+  background: var(--muxy-background);
+  font-family: var(--mono);
+  font-size: var(--font-footnote);
+  white-space: pre-wrap;
+}
+
+.details__note { margin: var(--s3) 0 0; color: var(--muxy-foreground-muted); }
+
+.details__filecount {
+  position: sticky;
+  top: 0;
+  padding: var(--s2) 0;
+  background: var(--muxy-surface);
+  font-size: var(--font-footnote);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--muxy-foreground-muted);
+}
+
+.details__files { display: flex; flex-direction: column; margin-top: var(--s2); }
+.details__empty { padding: var(--s5) 0; color: var(--muxy-foreground-muted); }
+
+.file {
+  display: flex;
+  align-items: center;
+  gap: var(--s3);
+  height: var(--row-height);
+  padding: 0 var(--s3);
+  background: none;
+  border: none;
+  border-radius: var(--radius-chip);
+  text-align: left;
+  font-size: var(--font-body);
+  color: var(--muxy-foreground);
+}
+
+.file:hover { background: var(--muxy-hover); border-color: transparent; }
+.file__name { flex: 0 0 auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.file__dir {
+  flex: 1 1 auto;
+  min-width: 0;
+  color: var(--muxy-foreground-muted);
+  font-size: var(--font-footnote);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  direction: rtl;
+  text-align: left;
+}
+
+.file__status {
+  flex: 0 0 auto;
+  width: 14px;
+  text-align: center;
+  font-family: var(--mono);
+  font-size: var(--font-caption);
+  font-weight: 600;
+}
+
+.file__status--A, .file__status--\? { color: var(--muxy-diff-add); }
+.file__status--D { color: var(--muxy-diff-remove); }
+.file__status--M, .file__status--R, .file__status--C { color: var(--muxy-diff-hunk); }
+
+/* ----------------------------------------------------------------- menu --- */
+
+.menu {
+  position: fixed;
+  z-index: 40;
+  min-width: 200px;
+  padding: var(--s2);
+  border: 1px solid var(--muxy-border);
+  border-radius: var(--radius-card);
+  background: var(--muxy-background);
+  box-shadow: 0 6px 24px rgb(0 0 0 / 0.28);
+}
+
+.menu__item {
+  display: block;
+  width: 100%;
+  height: auto;
+  padding: var(--s2) var(--s4);
+  border: none;
+  border-radius: var(--radius-chip);
+  background: none;
+  text-align: left;
+  font-size: var(--font-body);
+}
+
+.menu__item:hover:not(:disabled) { background: var(--muxy-hover); border-color: transparent; }
+.menu__item--danger { color: var(--muxy-diff-remove); }
+.menu__divider { height: 1px; margin: var(--s2) var(--s3); background: var(--muxy-border); }
+
+/* --------------------------------------------------------------- dialog --- */
+
+.overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--s7);
+  background: rgb(0 0 0 / 0.4);
+}
+
+.dialog {
+  width: 100%;
+  max-width: 380px;
+  padding: var(--s7);
+  border: 1px solid var(--muxy-border);
+  border-radius: var(--radius-card);
+  background: var(--muxy-background);
+  box-shadow: 0 12px 40px rgb(0 0 0 / 0.35);
+}
+
+.dialog__title { margin: 0; font-size: var(--font-title); font-weight: 600; }
+.dialog__message {
+  margin: var(--s3) 0 0;
+  font-size: var(--font-body);
+  color: var(--muxy-foreground-muted);
+  /* Diagnostics are multi-line and worth copying out. */
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  max-height: 320px;
+  overflow: auto;
+  user-select: text;
+}
+.dialog__row { display: flex; align-items: center; gap: var(--s4); margin-top: var(--s5); }
+.dialog__label { flex: 0 0 auto; font-size: var(--font-body); }
+.dialog__row input[type="text"], .dialog__row select { flex: 1 1 auto; min-width: 0; }
+.dialog__actions { display: flex; justify-content: flex-end; gap: var(--s4); margin-top: var(--s8); }
+.dialog__confirm { background: var(--muxy-accent); color: var(--muxy-background); border-color: transparent; }
+.dialog__confirm:hover:not(:disabled) { background: var(--muxy-accent); opacity: 0.88; }
+.dialog__confirm--danger { background: var(--muxy-diff-remove); }
+
+@media (prefers-reduced-motion: reduce) {
+  * { transition: none !important; animation: none !important; }
+}

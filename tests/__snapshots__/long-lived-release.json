@@ -1,0 +1,132 @@
+{
+  "paths": [
+    {
+      "d": "M16,12.0L16,228.0",
+      "colour": 0,
+      "isCommitted": true
+    },
+    {
+      "d": "M16,12.0C16,31.2 32,16.8 32,36.0L32,180.0C32,199.2 16,184.8 16,204.0",
+      "colour": 1,
+      "isCommitted": true
+    }
+  ],
+  "vertices": [
+    {
+      "id": 0,
+      "cx": 16,
+      "cy": 12,
+      "colour": 0,
+      "isCurrent": true,
+      "isStash": false,
+      "isCommitted": true
+    },
+    {
+      "id": 1,
+      "cx": 16,
+      "cy": 36,
+      "colour": 0,
+      "isCurrent": false,
+      "isStash": false,
+      "isCommitted": true
+    },
+    {
+      "id": 2,
+      "cx": 32,
+      "cy": 60,
+      "colour": 1,
+      "isCurrent": false,
+      "isStash": false,
+      "isCommitted": true
+    },
+    {
+      "id": 3,
+      "cx": 16,
+      "cy": 84,
+      "colour": 0,
+      "isCurrent": false,
+      "isStash": false,
+      "isCommitted": true
+    },
+    {
+      "id": 4,
+      "cx": 32,
+      "cy": 108,
+      "colour": 1,
+      "isCurrent": false,
+      "isStash": false,
+      "isCommitted": true
+    },
+    {
+      "id": 5,
+      "cx": 16,
+      "cy": 132,
+      "colour": 0,
+      "isCurrent": false,
+      "isStash": false,
+      "isCommitted": true
+    },
+    {
+      "id": 6,
+      "cx": 32,
+      "cy": 156,
+      "colour": 1,
+      "isCurrent": false,
+      "isStash": false,
+      "isCommitted": true
+    },
+    {
+      "id": 7,
+      "cx": 16,
+      "cy": 180,
+      "colour": 0,
+      "isCurrent": false,
+      "isStash": false,
+      "isCommitted": true
+    },
+    {
+      "id": 8,
+      "cx": 16,
+      "cy": 204,
+      "colour": 0,
+      "isCurrent": false,
+      "isStash": false,
+      "isCommitted": true
+    },
+    {
+      "id": 9,
+      "cx": 16,
+      "cy": 228,
+      "colour": 0,
+      "isCurrent": false,
+      "isStash": false,
+      "isCommitted": true
+    }
+  ],
+  "width": 48,
+  "height": 240,
+  "widthsAtVertices": [
+    30,
+    46,
+    46,
+    46,
+    46,
+    46,
+    46,
+    46,
+    30,
+    30
+  ],
+  "coloursAtVertices": [
+    0,
+    0,
+    1,
+    0,
+    1,
+    0,
+    1,
+    0,
+    0,
+    0
+  ]
+}

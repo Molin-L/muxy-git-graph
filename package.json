@@ -1,0 +1,93 @@
+{
+  "name": "git-graph",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "build": "vite build && node -e \"require('fs').copyFileSync('package.json','dist/package.json')\"",
+    "dev": "vite",
+    "test": "node --experimental-strip-types --test tests/*.test.ts",
+    "test:update": "UPDATE_SNAPSHOTS=1 node --experimental-strip-types --test tests/*.test.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@types/node": "^26.1.2",
+    "typescript": "^5.9.3",
+    "vite": "^7.3.5"
+  },
+  "muxy": {
+    "$schema": "https://raw.githubusercontent.com/muxy-app/muxy/main/docs/extensions/schema/manifest.schema.json",
+    "description": "View a Git graph of your repository, and act on it. A Muxy port of mhutchie's Git Graph for VS Code.",
+    "permissions": [
+      "commands:exec",
+      "panels:write",
+      "git:read",
+      "git:write",
+      "worktrees:read",
+      "files:read",
+      "storage:read",
+      "storage:write",
+      "tabs:write",
+      "notifications:write"
+    ],
+    "events": [
+      "project.switched",
+      "worktree.switched",
+      "worktree.headChanged",
+      "file.changed"
+    ],
+    "panels": [
+      {
+        "id": "graph",
+        "title": "Git Graph",
+        "entry": "panel/graph.html",
+        "position": "right",
+        "mode": "pinned"
+      }
+    ],
+    "tabTypes": [
+      {
+        "id": "diff-viewer",
+        "title": "Diff",
+        "entry": "panel/diff.html"
+      }
+    ],
+    "commands": [
+      {
+        "id": "toggle-graph",
+        "title": "Toggle Git Graph",
+        "defaultShortcut": "cmd+shift+g",
+        "action": {
+          "kind": "togglePanel",
+          "panel": "graph"
+        }
+      }
+    ],
+    "topbarItems": [
+      {
+        "id": "graph",
+        "icon": {
+          "symbol": "point.topleft.down.to.point.bottomright.curvepath"
+        },
+        "tooltip": "Toggle Git Graph",
+        "command": "toggle-graph"
+      }
+    ],
+    "marketplace": {
+      "author": "Molin. L",
+      "repository": "https://github.com/muxy-app/extensions",
+      "categories": [
+        "git",
+        "source-control"
+      ],
+      "icon": "icon.svg",
+      "screenshots": [
+        "screenshots/screenshot-1.png",
+        "screenshots/screenshot-2.png"
+      ]
+    }
+  }
+}

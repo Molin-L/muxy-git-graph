@@ -1,0 +1,71 @@
+{
+  "paths": [
+    {
+      "d": "M16,12.0L16,60.0",
+      "colour": 0,
+      "isCommitted": false
+    },
+    {
+      "d": "M16,60.0L16,84.0",
+      "colour": 0,
+      "isCommitted": true
+    },
+    {
+      "d": "M32,36.0C32,55.2 16,40.8 16,60.0",
+      "colour": 1,
+      "isCommitted": true
+    }
+  ],
+  "vertices": [
+    {
+      "id": 0,
+      "cx": 16,
+      "cy": 12,
+      "colour": 0,
+      "isCurrent": true,
+      "isStash": false,
+      "isCommitted": false
+    },
+    {
+      "id": 1,
+      "cx": 32,
+      "cy": 36,
+      "colour": 1,
+      "isCurrent": false,
+      "isStash": true,
+      "isCommitted": true
+    },
+    {
+      "id": 2,
+      "cx": 16,
+      "cy": 60,
+      "colour": 0,
+      "isCurrent": false,
+      "isStash": false,
+      "isCommitted": true
+    },
+    {
+      "id": 3,
+      "cx": 16,
+      "cy": 84,
+      "colour": 0,
+      "isCurrent": false,
+      "isStash": false,
+      "isCommitted": true
+    }
+  ],
+  "width": 48,
+  "height": 96,
+  "widthsAtVertices": [
+    30,
+    46,
+    30,
+    30
+  ],
+  "coloursAtVertices": [
+    0,
+    1,
+    0,
+    0
+  ]
+}

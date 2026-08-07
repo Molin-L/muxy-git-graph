@@ -1,0 +1,55 @@
+.diff {
+  flex: 1 1 auto;
+  overflow: auto;
+  font-family: var(--mono);
+  font-size: var(--font-footnote);
+}
+
+.diff__empty {
+  padding: var(--s8);
+  color: var(--muxy-foreground-muted);
+  font-family: -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
+  font-size: var(--font-body);
+}
+
+.diff__file { border-bottom: 1px solid var(--muxy-border); }
+
+.diff__fileheader {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  gap: var(--s4);
+  padding: var(--s3) var(--s5);
+  border-bottom: 1px solid var(--muxy-border);
+  background: var(--muxy-surface);
+}
+
+.diff__filepath { flex: 1 1 auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.diff__stat { font-size: var(--font-caption); font-weight: 600; }
+.diff__stat--add { color: var(--muxy-diff-add); }
+.diff__stat--del { color: var(--muxy-diff-remove); }
+
+.diff__table--split .diff__row { display: flex; }
+.diff__table--split .diff__side { display: flex; flex: 1 1 50%; min-width: 0; }
+.diff__table--split .diff__side + .diff__side { border-left: 1px solid var(--muxy-border); }
+
+.diff__row { display: flex; white-space: pre; line-height: 18px; }
+.diff__row--hunk { background: var(--muxy-surface); color: var(--muxy-diff-hunk); }
+.diff__row--addition { background: color-mix(in srgb, var(--muxy-diff-add) 14%, transparent); }
+.diff__row--deletion { background: color-mix(in srgb, var(--muxy-diff-remove) 14%, transparent); }
+.diff__row--meta { color: var(--muxy-foreground-muted); font-style: italic; }
+.diff__row--empty { background: var(--muxy-surface); }
+
+.diff__num {
+  flex: 0 0 auto;
+  width: 44px;
+  padding-right: var(--s3);
+  text-align: right;
+  color: var(--muxy-foreground-muted);
+  user-select: none;
+}
+
+.diff__sign { flex: 0 0 auto; width: 14px; text-align: center; user-select: none; }
+.diff__text { flex: 1 1 auto; min-width: 0; padding-right: var(--s5); overflow-wrap: anywhere; white-space: pre-wrap; }

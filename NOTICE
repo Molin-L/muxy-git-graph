@@ -1,0 +1,17 @@
+Muxy Git Graph
+==============
+
+This extension is a Muxy port of Git Graph for Visual Studio Code by mhutchie:
+
+    https://github.com/mhutchie/vscode-git-graph
+
+It is an independent project and is not endorsed by or affiliated with mhutchie.
+
+The lane geometry in `src/graph/layout.ts` is ported from `web/graph.ts` of
+vscode-git-graph, which is MIT licensed. The upstream licence is reproduced in
+`licenses/vscode-git-graph-LICENSE` and its copyright notice is retained in this
+project's LICENSE.
+
+Everything else — the data layer, the virtualised view, the styling and the tests —
+is written for Muxy and does not derive from the upstream source. See
+`docs/adr/0001-rewrite-not-port.md` for why.

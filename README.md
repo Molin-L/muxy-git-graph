@@ -1,0 +1,79 @@
+# Git Graph
+
+View a Git graph of your repository, and act on it — a Muxy port of
+[mhutchie's Git Graph for VS Code](https://github.com/mhutchie/vscode-git-graph)
+(MIT). Independent project, not endorsed by or affiliated with mhutchie. See
+[`NOTICE`](./NOTICE).
+
+Opens in the **right panel** with `cmd+shift+g`.
+
+## Features
+
+- **The graph** — local and remote branches, tags, stashes, uncommitted changes,
+  merge lanes, HEAD highlighting. Loads 300 commits and pages as you scroll.
+- **Click a commit** to expand its details inline, git-graph style: author,
+  committer, date, parents, message body, and the list of changed files. The graph
+  stretches around the expansion.
+- **Click a file** to open its diff in a tab, with a unified/split toggle.
+- **⌘/Ctrl-click a second commit** to compare the two.
+- **Right-click a commit** for Add Tag, Create Branch, Checkout, Cherry Pick,
+  Revert, Drop, Merge, Rebase, Reset, and copy actions — with Cherry Pick and Drop
+  correctly disabled on merge commits.
+- **Right-click a ref** for branch, remote-branch, tag and stash menus.
+- **Right-click uncommitted changes** to stash, reset, or clean.
+- **In-progress banner** with Abort and Continue when a merge, rebase, cherry-pick
+  or revert is mid-flight — something upstream git-graph does not have.
+- **Keyboard** — `⌘R` refresh, `⌘H` scroll to HEAD, `↑`/`↓` move the selection,
+  `Esc` close.
+- Columns drop as the panel narrows, so it stays usable at any width.
+
+## Building
+
+```sh
+npm install
+npm run build
+```
+
+Then **Load Unpacked** this folder in Muxy's Extensions modal, or **Reload** if it
+is already loaded. A Reload alone will not pick up unbuilt source.
+
+```sh
+npm test              # layout snapshots + data layer against a real repo
+npm run test:update   # regenerate snapshots — then READ them (ADR-0012)
+npm run typecheck
+```
+
+## Layout
+
+| Path | |
+|---|---|
+| `src/graph/` | Lane geometry. Pure, DOM-free, snapshot-tested. Ported from upstream. |
+| `src/data/` | Every git read and write. |
+| `src/view/` | Panel, virtualised rows, details, menus, dialogs. |
+| `src/actions/` | Context-menu definitions. |
+| `src/diff/` | Diff tab and unified-diff parser. |
+| `docs/adr/` | Why everything is the way it is. Read `0001` first. |
+| `CONTEXT.md` | Glossary. Lane, Vertex, Ref, Commit Feed, Graph Tab. |
+
+## Design decisions
+
+Fourteen ADRs in [`docs/adr/`](./docs/adr/). The ones that will surprise you:
+
+- **[0002](./docs/adr/0002-data-layer-split.md)** — reads go through `muxy.exec`,
+  writes through `muxy.git`. Split by intent, not capability.
+- **[0005](./docs/adr/0005-typescript.md)** — TypeScript, alone among Muxy
+  extensions, to de-risk the geometry port.
+- **[0007](./docs/adr/0007-virtualise-rows-not-graph.md)** — rows virtualise, the
+  graph does not. Includes what was measured, and where the reasoning was wrong.
+- **[0013](./docs/adr/0013-no-background-script.md)** — no `background.js`, despite
+  there being a polling loop.
+- **[0014](./docs/adr/0014-right-panel-not-tab.md)** — right panel, superseding the
+  tab decision in ADR-0003.
+
+## Not yet built
+
+The find widget (`⌘F`), the repository settings widget (remotes, issue linking),
+avatars, code-review tracking, and configurable settings. See
+[ADR-0004](./docs/adr/0004-v1-includes-destructive-actions.md) for the tier
+breakdown, and [`docs/spike-findings.md`](./docs/spike-findings.md) for the one
+open architectural risk.

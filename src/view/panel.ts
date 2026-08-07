@@ -1,0 +1,671 @@
+import { computeLayout } from "../graph/layout.ts";
+import { canDropCommit } from "../graph/queries.ts";
+import type { GraphConfig, GraphLayout } from "../graph/types.ts";
+import * as repo from "../data/repo.ts";
+import { UNCOMMITTED, write } from "../data/repo.ts";
+import type { ChangedFile, Commit, PendingOperation, Ref, RepoState } from "../data/repo.ts";
+import { commitMenu, refMenu } from "../actions/menus.ts";
+import type { ActionContext } from "../actions/menus.ts";
+import { closeContextMenu, openContextMenu } from "./context-menu.ts";
+import { confirmDialog, openDialog } from "./dialog.ts";
+import { renderCommitDetails } from "./commit-details.ts";
+import { renderGraph } from "./render-graph.ts";
+import { VirtualRows } from "./virtual-rows.ts";
+import { absoluteTime, el, relativeTime } from "./dom.ts";
+
+const ROW_HEIGHT = 24;
+const DETAILS_HEIGHT = 280;
+const INITIAL_LOAD = 300;
+const LOAD_MORE = 300;
+const POLL_MS = 4000;
+
+/** The Graph column never takes more than this share of the panel. */
+const MAX_GRAPH_FRACTION = 0.5;
+const MIN_GRAPH_WIDTH = 28;
+
+const CONFIG: GraphConfig = {
+  grid: { x: 12, y: ROW_HEIGHT, offsetX: 12, offsetY: ROW_HEIGHT / 2, expandY: DETAILS_HEIGHT },
+  style: "rounded",
+  uncommittedChanges: "openCircleAtUncommitted",
+};
+
+type Columns = { date: boolean; author: boolean; hash: boolean };
+
+/** Which refs win the visible chip slots when a commit carries several. */
+const REF_ORDER: Record<Ref["kind"], number> = { head: 0, tag: 1, remote: 2, stash: 3 };
+
+export class Panel {
+  private readonly root: HTMLElement;
+
+  private readonly branchLabel = el("span", "topbar__title", "Git Graph");
+  private readonly statusLabel = el("span", "topbar__repo");
+  private readonly banner = el("div", "banner");
+  private readonly scroller = el("div", "scroller");
+  private readonly head = el("div", "head");
+  private readonly content = el("div", "content");
+  private readonly rowsHost = el("div", "rows");
+  private readonly detailsHost = el("div", "details");
+  private readonly graphClip = el("div", "graphclip");
+  private readonly notice = el("div", "notice");
+  private readonly svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+
+  private state: RepoState = { commits: [], head: null, headBranch: "", moreAvailable: false };
+  private layout: GraphLayout | null = null;
+  private rows: VirtualRows | null = null;
+  private columns: Columns = { date: true, author: true, hash: true };
+
+  private selected: number | null = null;
+  private compareWith: number | null = null;
+  private loaded = INITIAL_LOAD;
+  private remotes: string[] = [];
+  private pending: PendingOperation = null;
+  private digest = "";
+  private pollTimer: number | undefined;
+  private busy = false;
+  private splitFraction = 0.5;
+  private lastReloadMs = 0;
+
+  constructor(root: HTMLElement) {
+    this.root = root;
+  }
+
+  async start(): Promise<void> {
+    this.build();
+    await this.restoreSplit();
+    await this.reload();
+    this.subscribe();
+  }
+
+  private async restoreSplit(): Promise<void> {
+    try {
+      const stored = await globalThis.muxy?.storage.get("details.split");
+      if (typeof stored === "number" && stored >= 0.2 && stored <= 0.8) {
+        this.splitFraction = stored;
+      }
+    } catch { /* first run */ }
+    this.detailsHost.style.setProperty("--cdv-split", `${(this.splitFraction * 100).toFixed(2)}%`);
+  }
+
+  /* ------------------------------------------------------------- chrome --- */
+
+  private build(): void {
+    const fetchButton = iconButton("Fetch from remotes", "↓", () =>
+      this.perform("Fetch", () => write.fetch(true)));
+    const refreshButton = iconButton("Refresh (⌘R)", "⟳", () => this.reload());
+
+    const topbar = el("div", "topbar");
+    topbar.append(this.branchLabel, this.statusLabel, el("span", "topbar__spacer"),
+      fetchButton, refreshButton);
+
+    this.banner.hidden = true;
+    this.svg.setAttribute("class", "graph");
+    this.detailsHost.hidden = true;
+
+    for (const [label, className] of [
+      ["Graph", "cell--graph"], ["Description", "cell--desc"],
+      ["Date", "cell--date"], ["Author", "cell--author"], ["Commit", "cell--hash"],
+    ]) {
+      this.head.appendChild(el("span", `cell ${className}`, label));
+    }
+
+    // The graph is clipped to its column, matching git-graph's limitGraphWidth.
+    this.graphClip.appendChild(this.svg);
+    this.content.append(this.graphClip, this.rowsHost, this.detailsHost);
+    this.scroller.append(this.head, this.content);
+
+    this.notice.hidden = true;
+    this.root.append(topbar, this.banner, this.notice, this.scroller);
+
+    this.rows = new VirtualRows({
+      scroller: this.scroller,
+      container: this.rowsHost,
+      rowHeight: ROW_HEIGHT,
+      overscan: 8,
+      createRow: () => this.createRow(),
+      renderRow: (element, index) => this.renderRow(element, index),
+    });
+
+    this.scroller.addEventListener("scroll", () => {
+      if (this.state.moreAvailable && !this.busy &&
+        this.scroller.scrollTop + this.scroller.clientHeight > this.scroller.scrollHeight - 400) {
+        void this.loadMore();
+      }
+    }, { passive: true });
+
+    new ResizeObserver(() => this.applyColumns()).observe(this.root);
+    window.addEventListener("keydown", (event) => this.onKeyDown(event));
+  }
+
+  /**
+   * Sizes the five columns. Hidden columns collapse to 0px rather than being
+   * removed, so the header and every recycled row keep the same track count.
+   */
+  private applyColumns(): void {
+    const width = this.root.clientWidth;
+    this.columns = { date: width >= 620, author: width >= 480, hash: width >= 360 };
+
+    const contentWidth = this.layout?.width ?? MIN_GRAPH_WIDTH;
+    const graph = Math.max(
+      MIN_GRAPH_WIDTH,
+      Math.min(contentWidth, Math.floor(width * MAX_GRAPH_FRACTION)),
+    );
+
+    // Summary and files sit side by side only when there is room for both.
+    this.detailsHost.classList.toggle("details--split", width >= 520);
+
+    const style = this.root.style;
+    style.setProperty("--col-graph", `${graph}px`);
+    style.setProperty("--col-date", this.columns.date ? "84px" : "0px");
+    style.setProperty("--col-author", this.columns.author ? "116px" : "0px");
+    style.setProperty("--col-hash", this.columns.hash ? "60px" : "0px");
+  }
+
+  /* --------------------------------------------------------------- data --- */
+
+  private async reload(): Promise<void> {
+    this.busy = true;
+    if (this.state.commits.length === 0) this.showNotice("Loading history…");
+    const started = Date.now();
+    try {
+      const [state, remotes, pending, digest] = await Promise.all([
+        repo.loadCommits(this.loaded),
+        repo.remotes(),
+        repo.pendingOperation(),
+        repo.refDigest(),
+      ]);
+      this.state = state;
+      this.remotes = remotes;
+      this.pending = pending;
+      this.digest = digest;
+      this.statusLabel.textContent = "";
+      this.reselect();
+      this.render();
+      this.renderBanner();
+
+      if (state.commits.length === 0) {
+        this.showNotice(state.head === null
+          ? "This repository has no commits yet."
+          : "No commits matched. The repository may be empty or unreachable.");
+      } else if (repo.needsRemoteSetup()) {
+        this.showRemoteSetupNotice();
+      } else {
+        this.hideNotice();
+      }
+    } catch (err) {
+      // A remote workspace makes every read a round trip, so surface the actual
+      // failing command rather than leaving a blank panel.
+      this.showNotice(err instanceof Error ? err.message : String(err), true);
+    } finally {
+      this.busy = false;
+      this.lastReloadMs = Date.now() - started;
+      this.updatePolling();
+    }
+  }
+
+  private showNotice(message: string, isError = false): void {
+    this.notice.hidden = false;
+    this.notice.classList.toggle("notice--error", isError);
+    this.notice.replaceChildren(el("span", "notice__text", message));
+    if (isError) {
+      const retry = el("button", "", "Retry");
+      retry.addEventListener("click", () => void this.reload());
+      this.notice.appendChild(retry);
+    }
+  }
+
+  private hideNotice(): void {
+    this.notice.hidden = true;
+  }
+
+  /**
+   * `muxy.exec` spawns locally, so a remote worktree path does not exist here.
+   * Rather than run a reduced feature set, ask for the SSH details once and
+   * tunnel every git command over Muxy's existing multiplexed connection.
+   */
+  private showRemoteSetupNotice(): void {
+    this.notice.hidden = false;
+    this.notice.classList.add("notice--error");
+    this.notice.replaceChildren(
+      el("span", "notice__text",
+        "Git cannot be run in this worktree — muxy.exec could not reach it, even " +
+        "through a shell. Connect over SSH to use the repository directly."),
+    );
+    const why = el("button", "", "Why?");
+    why.addEventListener("click", () => void this.showProbeReport());
+    const connect = el("button", "dialog__confirm", "Connect over SSH…");
+    connect.addEventListener("click", () => void this.promptRemote());
+    this.notice.append(why, connect);
+  }
+
+  /** Exactly what each transport rung tried, and what it got back. */
+  private async showProbeReport(): Promise<void> {
+    const attempts = repo.probeReport();
+    const lines = attempts.length === 0
+      ? ["(no attempts recorded)"]
+      : attempts.map((a) => `${a.ok ? "OK  " : "FAIL"}  ${a.rung}\n      sent: ${a.sent}\n      →     ${a.detail}`);
+
+    const info = await globalThis.muxy?.git.repoInfo().catch((err: unknown) =>
+      ({ root: `repoInfo() failed: ${String(err)}`, currentBranch: "" }));
+
+    await openDialog({
+      title: "Why git could not run",
+      message: `repoInfo().root = ${info?.root ?? "(unavailable)"}\n\n${lines.join("\n\n")}`,
+      confirmLabel: "Close",
+    });
+  }
+
+  private async promptRemote(): Promise<void> {
+    const info = await globalThis.muxy?.git.repoInfo().catch(() => null);
+    const values = await openDialog({
+      title: "Connect over SSH",
+      message:
+        "Git Graph will run git on the remote host, reusing Muxy's existing SSH " +
+        "connection so no new one is opened.",
+      fields: [
+        { kind: "text", id: "host", label: "SSH host", placeholder: "my-dev-box" },
+        { kind: "text", id: "path", label: "Repository path", value: info?.root ?? "~/" },
+      ],
+      confirmLabel: "Connect",
+    });
+    if (values === null) return;
+
+    const host = String(values.host).trim();
+    const path = String(values.path).trim();
+    if (host === "" || path === "") return;
+
+    this.showNotice(`Connecting to ${host}…`);
+    try {
+      await repo.connectRemote({ host, path });
+      await this.reload();
+    } catch (err) {
+      this.showNotice(err instanceof Error ? err.message : String(err), true);
+      const retry = el("button", "", "Edit…");
+      retry.addEventListener("click", () => void this.promptRemote());
+      this.notice.appendChild(retry);
+    }
+  }
+
+  private async loadMore(): Promise<void> {
+    this.loaded += LOAD_MORE;
+    await this.reload();
+  }
+
+  /** Keep the selection pinned to the same commit hash across a refresh. */
+  private reselect(): void {
+    if (this.selected === null) return;
+    const previous = this.selectedHash;
+    const index = this.state.commits.findIndex((c) => c.hash === previous);
+    this.selected = index === -1 ? null : index;
+    if (this.selected === null) {
+      this.compareWith = null;
+      this.detailsHost.hidden = true;
+    }
+  }
+
+  private selectedHash: string | null = null;
+
+  /* ------------------------------------------------------------- render --- */
+
+  private render(): void {
+    this.branchLabel.textContent = this.state.headBranch || "Git Graph";
+
+    const expandAt = this.selected;
+    this.layout = computeLayout(this.state.commits, CONFIG, {
+      commitHead: this.state.head,
+      expandAt: expandAt ?? -1,
+    });
+    renderGraph(this.svg, this.layout);
+    this.applyColumns();
+
+    this.rows?.setCount(
+      this.state.commits.length,
+      expandAt === null ? null : { afterIndex: expandAt, amount: DETAILS_HEIGHT },
+    );
+    this.content.style.height = `${this.rows?.totalHeight ?? 0}px`;
+    this.positionDetails();
+  }
+
+  private positionDetails(): void {
+    if (this.selected === null || this.rows === null) {
+      this.detailsHost.hidden = true;
+      return;
+    }
+    this.detailsHost.hidden = false;
+    this.detailsHost.style.top = `${(this.selected + 1) * ROW_HEIGHT}px`;
+    this.detailsHost.style.height = `${DETAILS_HEIGHT}px`;
+  }
+
+  private renderBanner(): void {
+    if (this.pending === null) {
+      this.banner.hidden = true;
+      return;
+    }
+    const operation = this.pending;
+    this.banner.hidden = false;
+    this.banner.replaceChildren(
+      el("span", "banner__text", `A ${operation} is in progress. Resolve conflicts, then continue.`),
+      textButton("Continue", () => this.perform("Continue", () => write.continueOperation(operation))),
+      textButton("Abort", () => this.perform("Abort", () => write.abort(operation))),
+    );
+  }
+
+  private createRow(): HTMLElement {
+    const row = el("div", "row");
+    const description = el("span", "cell cell--desc");
+    description.append(el("span", "row__refs"), el("span", "row__subject"));
+    row.append(
+      el("span", "cell cell--graph"),
+      description,
+      el("span", "cell cell--date"),
+      el("span", "cell cell--author"),
+      el("span", "cell cell--hash"),
+    );
+
+    row.addEventListener("click", (event) => {
+      const index = Number(row.dataset.index);
+      if (Number.isNaN(index)) return;
+      if (event.metaKey || event.ctrlKey) void this.selectComparison(index);
+      else void this.select(index);
+    });
+
+    row.addEventListener("contextmenu", (event) => {
+      event.preventDefault();
+      const index = Number(row.dataset.index);
+      if (Number.isNaN(index)) return;
+      const commit = this.state.commits[index];
+      openContextMenu(event.clientX, event.clientY,
+        commitMenu(commit, canDropCommit(this.state.commits, index, this.state.head), this.actionContext()));
+    });
+
+    return row;
+  }
+
+  private renderRow(element: HTMLElement, index: number): void {
+    const commit = this.state.commits[index];
+    const [, description, date, author, hash] = element.children as unknown as HTMLElement[];
+    const [refs, subject] = description.children as unknown as HTMLElement[];
+    element.dataset.index = String(index);
+    element.classList.toggle("row--selected", index === this.selected);
+    element.classList.toggle("row--compare", index === this.compareWith);
+    element.classList.toggle("row--head", commit.hash === this.state.head);
+
+    refs.replaceChildren(...this.refChips(commit));
+    subject.textContent = commit.subject;
+    subject.title = commit.subject;
+    date.textContent = commit.hash === UNCOMMITTED ? "" : relativeTime(commit.authorDate);
+    date.title = absoluteTime(commit.authorDate);
+    author.textContent = commit.authorName;
+    hash.textContent = commit.hash === UNCOMMITTED ? "" : commit.hash.slice(0, 7);
+  }
+
+  /**
+   * Shows the most relevant refs and collapses the rest behind a `+N` chip, which
+   * opens a picker so the hidden ones stay actionable rather than just visible.
+   */
+  private refChips(commit: Commit): HTMLElement[] {
+    if (commit.refs.length === 0) return [];
+
+    const ordered = [...commit.refs].sort((a, b) => REF_ORDER[a.kind] - REF_ORDER[b.kind]);
+    const limit = this.columns.date ? 3 : this.columns.author ? 2 : 1;
+    if (ordered.length <= limit + 1) return ordered.map((ref) => this.refChip(ref, commit));
+
+    const visible = ordered.slice(0, limit);
+    const hidden = ordered.slice(limit);
+    const chips = visible.map((ref) => this.refChip(ref, commit));
+
+    const more = el("span", "ref ref--more", `+${hidden.length}`);
+    more.title = hidden.map((ref) => ref.name).join("\n");
+    const openHidden = (x: number, y: number): void => {
+      openContextMenu(x, y, hidden.map((ref) => ({
+        label: ref.name,
+        run: () => {
+          const rect = more.getBoundingClientRect();
+          openContextMenu(rect.left, rect.bottom + 2, refMenu(ref, commit, this.actionContext()));
+        },
+      })));
+    };
+    more.addEventListener("click", (event) => {
+      event.stopPropagation();
+      const rect = more.getBoundingClientRect();
+      openHidden(rect.left, rect.bottom + 2);
+    });
+    more.addEventListener("contextmenu", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      openHidden(event.clientX, event.clientY);
+    });
+
+    chips.push(more);
+    return chips;
+  }
+
+  private refChip(ref: Ref, commit: Commit): HTMLElement {
+    const chip = el("span", `ref ref--${ref.kind}`, ref.name);
+    chip.title = ref.name;
+    chip.addEventListener("click", (event) => {
+      event.stopPropagation();
+      const rect = chip.getBoundingClientRect();
+      openContextMenu(rect.left, rect.bottom + 2, refMenu(ref, commit, this.actionContext()));
+    });
+    chip.addEventListener("contextmenu", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      openContextMenu(event.clientX, event.clientY, refMenu(ref, commit, this.actionContext()));
+    });
+    return chip;
+  }
+
+  /* ---------------------------------------------------------- selection --- */
+
+  private async select(index: number): Promise<void> {
+    if (this.selected === index && this.compareWith === null) {
+      this.closeDetails();
+      return;
+    }
+    this.selected = index;
+    this.compareWith = null;
+    this.selectedHash = this.state.commits[index].hash;
+    this.render();
+    this.rows?.refresh();
+
+    const commit = this.state.commits[index];
+    try {
+      const details = await repo.commitDetails(commit.hash);
+      renderCommitDetails(this.detailsHost, details, this.detailsHandlers(commit.hash, null), null);
+    } catch (err) {
+      this.detailsHost.replaceChildren(
+        el("div", "details__empty", err instanceof Error ? err.message : String(err)));
+    }
+  }
+
+  private async selectComparison(index: number): Promise<void> {
+    if (this.selected === null || this.selected === index) return;
+    this.compareWith = index;
+    this.rows?.refresh();
+
+    const from = this.state.commits[Math.max(this.selected, index)];
+    const to = this.state.commits[Math.min(this.selected, index)];
+    try {
+      const files = await repo.comparisonFiles(from.hash, to.hash);
+      renderCommitDetails(
+        this.detailsHost,
+        {
+          hash: to.hash, parents: [], authorName: "", authorEmail: "", authorDate: "",
+          committerName: "", committerEmail: "", committerDate: "", body: "", files,
+        },
+        this.detailsHandlers(to.hash, { from: from.hash, to: to.hash }),
+        { from: from.hash, to: to.hash },
+      );
+    } catch (err) {
+      this.detailsHost.replaceChildren(
+        el("div", "details__empty", err instanceof Error ? err.message : String(err)));
+    }
+  }
+
+  private closeDetails(): void {
+    this.selected = null;
+    this.compareWith = null;
+    this.selectedHash = null;
+    this.render();
+    this.rows?.refresh();
+  }
+
+  private detailsHandlers(hash: string, comparison: { from: string; to: string } | null) {
+    return {
+      close: () => this.closeDetails(),
+      openDiff: (file: ChangedFile) => void this.openDiff(hash, file, comparison),
+      resize: (fraction: number) => {
+        this.splitFraction = fraction;
+        this.detailsHost.style.setProperty("--cdv-split", `${(fraction * 100).toFixed(2)}%`);
+      },
+      resizeEnd: () => {
+        void globalThis.muxy?.storage.set("details.split", this.splitFraction).catch(() => undefined);
+      },
+    };
+  }
+
+  private async openDiff(
+    hash: string, file: ChangedFile, comparison: { from: string; to: string } | null,
+  ): Promise<void> {
+    const muxy = globalThis.muxy;
+    if (!muxy) return;
+    try {
+      await muxy.tabs.open({
+        // `kind` is required, and the id comes from the runtime rather than a
+        // literal so it can never drift from manifest.name.
+        kind: "extensionWebView",
+        extension: {
+          id: muxy.extensionID,
+          tabType: "diff-viewer",
+          singleton: true,
+          data: comparison !== null
+            ? { path: file.path, oldPath: file.oldPath, from: comparison.from, to: comparison.to }
+            : { path: file.path, oldPath: file.oldPath, hash, shortHash: hash.slice(0, 8) },
+        },
+      });
+    } catch (err) {
+      this.statusLabel.textContent = "Could not open diff";
+      this.statusLabel.title = err instanceof Error ? err.message : String(err);
+    }
+  }
+
+  /* ------------------------------------------------------------ actions --- */
+
+  private actionContext(): ActionContext {
+    return {
+      currentBranch: this.state.headBranch,
+      headHash: this.state.head,
+      remotes: this.remotes,
+      perform: (label, operation) => this.perform(label, operation),
+      refresh: () => this.reload(),
+    };
+  }
+
+  private async perform(label: string, operation: () => Promise<unknown>): Promise<void> {
+    this.statusLabel.textContent = `${label}…`;
+    try {
+      await operation();
+      this.statusLabel.textContent = "";
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      this.statusLabel.textContent = `${label} failed`;
+      this.statusLabel.title = message;
+      await confirmDialog(`${label} failed`, message, "Dismiss");
+    }
+    await this.reload();
+  }
+
+  /* --------------------------------------------------------- freshness --- */
+
+  private subscribe(): void {
+    const muxy = globalThis.muxy;
+    if (muxy) {
+      for (const event of ["project.switched", "worktree.switched", "worktree.headChanged"]) {
+        try {
+          muxy.events.subscribe(event, () => {
+            // The new workspace may be remote where the old one was local, or the
+            // reverse, so re-probe rather than trusting the cached answer.
+            if (event !== "worktree.headChanged") repo.resetCapabilities();
+            void this.reload();
+          });
+        } catch { /* event not granted */ }
+      }
+      try {
+        let debounce: number | undefined;
+        muxy.events.subscribe("file.changed", () => {
+          window.clearTimeout(debounce);
+          debounce = window.setTimeout(() => void this.pollNow(), 400);
+        });
+      } catch { /* event not granted */ }
+    }
+
+    // Poll only while the panel is visible — an unfocused panel costs nothing.
+    document.addEventListener("visibilitychange", () => this.updatePolling());
+    window.addEventListener("focus", () => this.updatePolling());
+    window.addEventListener("blur", () => this.updatePolling());
+    this.updatePolling();
+  }
+
+  private updatePolling(): void {
+    window.clearInterval(this.pollTimer);
+    if (document.visibilityState !== "visible") return;
+    // On a remote workspace a reload costs seconds of round trips; a fixed 4s tick
+    // would queue work faster than it completes. Back off to a multiple of the
+    // observed cost so a slow host is polled proportionally less.
+    const interval = Math.max(POLL_MS, this.lastReloadMs * 4);
+    this.pollTimer = window.setInterval(() => void this.pollNow(), interval);
+  }
+
+  private async pollNow(): Promise<void> {
+    if (this.busy) return;
+    try {
+      const digest = await repo.refDigest();
+      if (digest !== this.digest) await this.reload();
+    } catch { /* transient */ }
+  }
+
+  /* -------------------------------------------------------- keyboard --- */
+
+  private onKeyDown(event: KeyboardEvent): void {
+    const meta = event.metaKey || event.ctrlKey;
+    if (event.key === "Escape") {
+      closeContextMenu();
+      if (this.selected !== null) this.closeDetails();
+      return;
+    }
+    if (meta && event.key.toLowerCase() === "r") {
+      event.preventDefault();
+      void this.reload();
+      return;
+    }
+    if (meta && event.key.toLowerCase() === "h") {
+      event.preventDefault();
+      this.scrollToHead();
+      return;
+    }
+    if (this.selected !== null && (event.key === "ArrowDown" || event.key === "ArrowUp")) {
+      event.preventDefault();
+      const next = this.selected + (event.key === "ArrowDown" ? 1 : -1);
+      if (next >= 0 && next < this.state.commits.length) void this.select(next);
+    }
+  }
+
+  private scrollToHead(): void {
+    const index = this.state.commits.findIndex((c) => c.hash === this.state.head);
+    if (index === -1 || this.rows === null) return;
+    this.scroller.scrollTop = Math.max(0, this.rows.topOf(index) - this.scroller.clientHeight / 2);
+  }
+}
+
+function iconButton(title: string, glyph: string, run: () => void): HTMLElement {
+  const button = el("button", "iconbutton", glyph);
+  button.title = title;
+  button.addEventListener("click", run);
+  return button;
+}
+
+function textButton(label: string, run: () => void): HTMLElement {
+  const button = el("button", "", label);
+  button.addEventListener("click", run);
+  return button;
+}
