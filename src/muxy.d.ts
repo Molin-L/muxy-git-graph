@@ -62,7 +62,15 @@ export interface MuxyGit {
 }
 
 export interface MuxyApi {
-  exec(command: string[] | { shell: string }, options?: { cwd?: string }): Promise<ExecResult>;
+  /**
+   * The object form carries its own options: Muxy builds the payload from the
+   * first argument alone and discards a second one, so `{shell}` must include
+   * `cwd` inline rather than beside it.
+   */
+  exec(
+    command: string[] | { shell: string; cwd?: string; env?: Record<string, string> },
+    options?: { cwd?: string; env?: Record<string, string>; timeoutMs?: number },
+  ): Promise<ExecResult>;
   git: MuxyGit;
   extensionID: string;
   tabs: {

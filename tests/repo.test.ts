@@ -312,27 +312,33 @@ test("falls back to muxy.git when exec cannot spawn (remote workspace)", async (
   }
 });
 
-test("fallback transports override the spawn cwd", async () => {
+test("fallback transports pass cwd where Muxy actually reads it", async () => {
   const repo = await import("../src/data/repo.ts");
   const muxy = (globalThis as Record<string, unknown>).muxy as Record<string, unknown>;
   const realExec = muxy.exec;
   const realGit = muxy.git;
-
-  const calls: Array<{ command: unknown; options: unknown }> = [];
   repo.resetCapabilities();
 
-  // Reproduces the real failure: Muxy's spawn cwd is unresolvable, so *every*
-  // launch fails — including `git --version`, which never reads the cwd.
+  // Models Muxy's own buildExecPayload: for the object form the payload is built
+  // from the FIRST argument alone, so a `cwd` passed beside it is discarded.
+  const seen: Array<{ cwd: string | undefined; shell: string | undefined }> = [];
   muxy.exec = (command: unknown, options?: unknown) => {
-    calls.push({ command, options });
-    const opts = options as { cwd?: string } | undefined;
-    if (opts?.cwd === undefined) {
+    const isObject = !Array.isArray(command);
+    const record = command as { shell?: string; cwd?: string };
+    const cwd = isObject ? record.cwd : (options as { cwd?: string } | undefined)?.cwd;
+    seen.push({ cwd, shell: isObject ? record.shell : undefined });
+
+    // Reproduces the real failure: Muxy spawns with the worktree path as cwd, which
+    // does not exist locally, unless the call supplies its own.
+    if (cwd === undefined) {
       return Promise.reject(new Error("exec failed to launch: spawn process: No such file or directory"));
     }
     return Promise.resolve({ stdout: "git version 2.43.0\n", stderr: "", exitCode: 0 });
   };
   muxy.git = {
-    repoInfo: () => Promise.resolve({ root: "~/projects/gateway", gitDir: "", isWorktree: false, currentBranch: "main" }),
+    repoInfo: () => Promise.resolve({
+      root: "/home/dev/projects/gateway", gitDir: "", isWorktree: false, currentBranch: "main",
+    }),
     log: () => Promise.resolve([]),
     status: () => Promise.resolve({ branch: "main", stagedFiles: [], unstagedFiles: [] }),
   };
@@ -341,18 +347,18 @@ test("fallback transports override the spawn cwd", async () => {
     await repo.loadCommits(10).catch(() => undefined);
     const report = repo.probeReport();
 
-    assert.equal(report[0]?.rung, "direct", "the plain exec is always tried first");
-    assert.equal(report[0]?.ok, false);
-    assert.equal(calls[0]?.options, undefined, "the direct rung passes no cwd");
+    assert.equal(report[0]?.rung, "direct");
+    assert.equal(report[0]?.ok, false, "the plain form has no cwd of its own to give");
 
     const shellCwd = report.find((a) => a.rung === "shellCwd");
-    assert.ok(shellCwd, "the shell rung runs when repoInfo reports a root");
-    assert.ok(shellCwd.ok, "with a valid spawn cwd the shell launches");
-    assert.ok(shellCwd.sent.includes("cd ~/'projects/gateway'"),
-      "the tilde is left expandable for the shell");
+    assert.ok(shellCwd?.ok, "the shell rung must succeed once cwd reaches the payload");
 
-    const withCwd = calls.find((c) => (c.options as { cwd?: string } | undefined)?.cwd === "/");
-    assert.ok(withCwd, "fallback rungs spawn from a directory that certainly exists");
+    const objectCall = seen.find((c) => c.shell !== undefined);
+    assert.ok(objectCall, "the shell rung uses the object form");
+    assert.equal(objectCall.cwd, "/",
+      "cwd must be inside the object — beside it, Muxy drops it silently");
+    assert.ok(objectCall.shell?.includes("cd '/home/dev/projects/gateway'"),
+      "and the shell still enters the worktree");
   } finally {
     muxy.exec = realExec;
     muxy.git = realGit;

@@ -97,12 +97,16 @@ type Transport =
 
 let transportMode: Transport = { kind: "direct" };
 
-function transport(command: string[] | { shell: string }): string[] | { shell: string } {
+function transport(
+  command: string[] | { shell: string },
+): string[] | { shell: string; cwd?: string } {
   switch (transportMode.kind) {
     case "direct":
       return command;
     case "shellCwd":
       return {
+        // `cwd` must live inside this object, not beside it.
+        cwd: SAFE_CWD,
         shell: Array.isArray(command)
           ? remote.shellCommand(command, transportMode.path)
           : remote.shellScript(command.shell, transportMode.path),
@@ -118,20 +122,21 @@ function transport(command: string[] | { shell: string }): string[] | { shell: s
  */
 const SAFE_CWD = "/";
 
-function execOptions(): { cwd?: string } | undefined {
-  return transportMode.kind === "direct" ? undefined : { cwd: SAFE_CWD };
-}
-
 function exec(command: string[] | { shell: string }): Promise<ExecResult> {
   const label = Array.isArray(command) ? command.join(" ") : command.shell;
   const sent = transport(command);
-  const options = execOptions();
   return new Promise((resolve, reject) => {
     const timer = setTimeout(
       () => reject(new Error(`Timed out after ${EXEC_TIMEOUT_MS / 1000}s: ${label}`)),
       EXEC_TIMEOUT_MS,
     );
-    api().exec(sent, options).then(
+    // The object form takes its options inline: Muxy's bridge builds the payload
+    // from the first argument alone and discards a second one, so a `cwd` passed
+    // alongside `{shell}` is silently dropped.
+    const call = Array.isArray(sent)
+      ? api().exec(sent, transportMode.kind === "direct" ? undefined : { cwd: SAFE_CWD })
+      : api().exec(sent);
+    call.then(
       (res) => { clearTimeout(timer); resolve(res); },
       (err) => { clearTimeout(timer); reject(err); },
     );
@@ -287,6 +292,7 @@ async function runProbe(): Promise<boolean> {
     transportMode = mode;
     execUsable = true;
     awaitingRemoteSetup = false;
+    void persistDiagnostics();
     return true;
   };
 
