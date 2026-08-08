@@ -64,7 +64,9 @@ export async function copyToClipboard(value: string): Promise<void> {
 export function openExternal(url: string): void {
   const muxy = globalThis.muxy;
   if (muxy?.browser?.open) {
-    void Promise.resolve(muxy.browser.open({ url })).catch(() => {
+    // Positional string, not an options object — the bridge does String(url),
+    // so an object arrives as "[object Object]" and gets googled.
+    void Promise.resolve(muxy.browser.open(url)).catch(() => {
       void muxy.exec(["open", url]).catch(() => undefined);
     });
     return;

@@ -98,7 +98,9 @@ export interface MuxyApi {
     set(key: string, value: unknown): Promise<void>;
   };
   browser?: {
-    open(args: { url: string; split?: boolean }): Promise<unknown>;
+    /** Positional URL string — the bridge coerces its first argument with
+     *  String(), so an options object would become "[object Object]". */
+    open(url: string, opts?: { split?: boolean }): Promise<unknown>;
   };
   notifications?: {
     post(args: { title: string; body?: string }): Promise<void>;
