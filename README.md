@@ -1,3 +1,5 @@
+![Commit detail view](./docs/commit-detail-view.png)
+
 # Git Graph
 
 View a Git graph of your repository, and act on it — a Muxy port of
@@ -6,6 +8,13 @@ View a Git graph of your repository, and act on it — a Muxy port of
 [`NOTICE`](./NOTICE).
 
 Opens in the **right panel** with `cmd+shift+g`.
+
+## Requirements
+
+**Muxy `1.5.0-beta.912-arm64`.** The extension depends on APIs from this build —
+notably the background-context exec relay it needs for remote workspaces
+([ADR-0017](./docs/adr/0017-background-exec-relay.md)). Older builds are not
+supported.
 
 ## Features
 
