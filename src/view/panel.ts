@@ -129,8 +129,6 @@ export class Panel {
     });
 
     const topbar = el("div", "topbar");
-    topbar.append(this.branchLabel, this.statusLabel, el("span", "topbar__spacer"),
-      fetchButton, refreshButton);
 
     this.banner.hidden = true;
     this.svg.setAttribute("class", "graph");
@@ -157,8 +155,13 @@ export class Panel {
       },
     }, this.findOptions);
 
+    // The find field takes the spacer's role, so it absorbs whatever width the
+    // labels and buttons do not need.
+    topbar.append(this.branchLabel, this.statusLabel, this.find.element,
+      fetchButton, refreshButton);
+
     this.notice.hidden = true;
-    this.root.append(topbar, this.find.element, this.banner, this.notice, this.scroller);
+    this.root.append(topbar, this.banner, this.notice, this.scroller);
 
     this.rows = new VirtualRows({
       scroller: this.scroller,
@@ -200,6 +203,10 @@ export class Panel {
     // Summary and files sit side by side only when there is room for both.
     this.detailsHost.classList.toggle("details--split", width >= 520);
 
+    // Below this the find field is squeezed to a couple of characters. The
+    // steppers go rather than the input — ⏎ and ⇧⏎ still walk the matches.
+    this.root.classList.toggle("root--tight", width < 400);
+
     const style = this.root.style;
     style.setProperty("--col-graph", `${graph}px`);
     style.setProperty("--col-date", this.columns.date ? "84px" : "0px");
@@ -237,7 +244,9 @@ export class Panel {
           : "No commits matched. The repository may be empty or unreachable.");
       } else if (repo.isDegraded()) {
         // Reading through muxy.git, as Muxy's own git extension does on a remote.
-        this.statusLabel.textContent = "read-only · no shell on this workspace";
+        // Terse: the topbar is shared with the find field now, and the whole
+        // explanation is one hover away.
+        this.statusLabel.textContent = "read-only";
         this.statusLabel.title =
           "muxy.exec runs on the machine hosting Muxy, so it cannot reach this " +
           "worktree. History comes from muxy.git; diffs and write actions need a " +

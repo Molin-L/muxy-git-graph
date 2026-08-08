@@ -65,10 +65,19 @@ body {
   flex: 0 0 auto;
 }
 
+/* Three items compete for the topbar: the branch name, the status, and the find
+   field. They give way in that reverse order — status first, all the way to
+   nothing, then the field down to its floor. The branch name never shrinks; it
+   is short, and truncating it to "mast…" to widen a search box is a bad trade.
+   Its cap is for the pathological branch name, not the ordinary one. */
 .topbar__title {
   font-size: var(--font-title);
   font-weight: 600;
   white-space: nowrap;
+  flex: 0 0 auto;
+  max-width: 45%;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .topbar__repo:empty { display: none; }
@@ -79,6 +88,8 @@ body {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  flex: 0 1 auto;
+  min-width: 0;
 }
 
 .topbar__spacer { flex: 1 1 auto; }
@@ -124,25 +135,27 @@ select, input[type="text"] {
 
 /* ----------------------------------------------------------------- find --- */
 
-/* A permanent row in the chrome stack rather than an overlay. The panel is
-   narrow enough that a floating widget would cover the column headers it is
-   searching, and this row is always present, so the padding is kept tight. */
+/* Lives in the topbar, in place of the spacer, so find costs no vertical space
+   at all. It is the only flexible item there: the labels hold their content and
+   the field absorbs the rest. */
 .find {
   display: flex;
   align-items: center;
   gap: var(--s2);
-  padding: var(--s2) var(--s5);
-  border-bottom: 1px solid var(--muxy-border);
-  background: var(--muxy-surface);
-  flex: 0 0 auto;
+  flex: 1 1 auto;
+  min-width: 0;
 }
 
-/* The toggles sit inside the field's border, so the three read as one control. */
+/* Count, toggles and clear all sit inside the field's border, so they read as
+   one control and cost the topbar a single slot. */
 .find__field {
   display: flex;
   align-items: center;
   gap: var(--s1);
   flex: 1 1 auto;
+  /* The floor lives on the input itself, not here: this box also holds the
+     count and three buttons, so a floor here would still let the text area
+     collapse to nothing. */
   min-width: 0;
   padding-right: var(--s1);
   background: var(--muxy-background);
@@ -155,7 +168,9 @@ select, input[type="text"] {
 
 .find__input {
   flex: 1 1 auto;
-  min-width: 0;
+  /* Enough to read a short query in. Everything else in the topbar ellipsizes
+     or drops before this gives way. */
+  min-width: 64px;
   height: 22px;
   padding: 0 var(--s3);
   font: inherit;
@@ -185,9 +200,13 @@ select, input[type="text"] {
 .find__toggle:hover:not(:disabled) { background: var(--muxy-hover); border-color: transparent; }
 .find__toggle--on { background: var(--muxy-accent-soft); color: var(--muxy-accent); }
 
+/* Costs nothing until there is a query — the idle topbar is just a search box. */
+.find__status:empty { display: none; }
+
 .find__status {
   flex: 0 0 auto;
-  font-size: var(--font-footnote);
+  padding: 0 var(--s2);
+  font-size: var(--font-caption);
   color: var(--muxy-foreground-muted);
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
@@ -197,7 +216,11 @@ select, input[type="text"] {
 
 .find__step { flex: 0 0 auto; width: 20px; height: 20px; font-size: var(--font-footnote); }
 .find__step:hover:not(:disabled) { background: var(--muxy-hover); }
-.find__clear { font-size: var(--font-body); }
+.find__clear { font-size: var(--font-footnote); }
+
+/* Narrow panel: the steppers are the one part of find with a keyboard
+   equivalent, so they are what goes. */
+.root--tight .find__step { display: none; }
 
 /* Matched text inside a row cell. Painted per row as it scrolls in. The explicit
    colour is for the Author and Commit cells, whose text is muted — a hit there

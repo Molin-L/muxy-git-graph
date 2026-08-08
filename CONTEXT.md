@@ -49,12 +49,12 @@ The pane docked at the bottom of the Graph Tab showing a selected commit's messa
 refs and changed files. It lists files; it does not render diffs.
 _Avoid_: inspector, sidebar, preview
 
-**Find Bar**:
-The permanent search row between the topbar and the Commit Feed. It does not open or
-close — `⌘F` only moves focus to it — and it searches the Commit Feed itself rather
-than the rendered rows
+**Find Field**:
+The permanent search control in the topbar, sharing the row with Fetch and Refresh.
+It does not open or close — `⌘F` only moves focus to it — and it searches the Commit
+Feed itself rather than the rendered rows
 (see [ADR-0018](./docs/adr/0018-find-matches-the-feed-not-the-dom.md)).
-_Avoid_: find widget, search box, filter
+_Avoid_: find widget, find bar, search box, filter
 
 **In-Progress Banner**:
 The persistent banner shown when the repository is mid-merge, mid-rebase,

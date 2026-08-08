@@ -43,11 +43,16 @@ find bar drops the pattern and the next render writes plain `textContent`.
   mid-walk. Upstream searches everything, notices `.*` produced empty matches,
   then throws the results away. Here `.*` never gets a result set: it would
   report every commit as a match while highlighting nothing.
-- **The bar is permanent, not summoned.** `⌘F` is a chord a panel webview competes
-  with the host for; it reached this panel unreliably in practice, and a find that
-  only exists once the chord lands is one some users never find at all. A field
-  that is simply always there costs one row and makes the shortcut a convenience.
-  `⌘F` moves focus to it, and Escape clears the query rather than hiding anything.
+- **The field is permanent, not summoned, and it lives in the topbar.** `⌘F` is a
+  chord a panel webview competes with the host for; it reached this panel
+  unreliably in practice, and a find that only exists once the chord lands is one
+  some users never find at all. A field that is simply always there makes the
+  shortcut a convenience. `⌘F` moves focus to it, and Escape clears the query
+  rather than hiding anything. Putting it beside Fetch and Refresh rather than in
+  a row of its own costs no vertical space, at the price of a topbar that has to
+  degrade: the status label ellipsizes first, then the match steppers drop below
+  400px (`⏎`/`⇧⏎` still work), and the branch name and a readable input are the
+  last things standing.
 - Stepping through matches scrolls and rings the row, but does not select it.
   Selecting would open the Commit Details pane, and on a remote workspace each
   open is a round trip (ADR-0017) — upstream reaches the same default from the

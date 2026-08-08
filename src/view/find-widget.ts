@@ -12,12 +12,17 @@ export interface FindWidgetHandlers {
 
 const DEBOUNCE_MS = 180;
 
+/** The steppers are hidden on a narrow panel, so the keys they stand for have to
+ *  be discoverable from the field itself. */
+const INPUT_TITLE = "Find commits — ⏎ next match, ⇧⏎ previous";
+
 /**
- * The find bar. Always present, directly under the topbar.
+ * The find bar. Always present, and it lives in the topbar alongside Fetch and
+ * Refresh rather than taking a row of its own.
  *
  * It does not open or close. ⌘F is a chord a panel webview competes with the
  * host for, and a find that only exists once that chord lands is a find that
- * some users never see at all. A permanent field costs one row and makes the
+ * some users never see at all. A field that is simply always there makes the
  * shortcut a convenience rather than the entrance.
  *
  * It owns its own chrome and nothing else — matching, match ordering and
@@ -45,6 +50,7 @@ export class FindWidget {
 
     this.input.type = "text";
     this.input.placeholder = "Find commits";
+    this.input.title = INPUT_TITLE;
     this.input.spellcheck = false;
     this.input.addEventListener("input", () => this.schedule());
     this.input.addEventListener("keydown", (event) => this.onKeyDown(event));
@@ -62,11 +68,13 @@ export class FindWidget {
       this.clear();
       this.input.focus();
     });
-    this.clearButton.classList.add("find__clear");
+    this.clearButton.className = "find__toggle find__clear";
 
+    // Count and clear live inside the field, as they do in a browser's find bar.
+    // The topbar has room for one flexible slot, not five fixed ones.
     const field = el("div", "find__field");
-    field.append(this.input, this.caseToggle, this.regexToggle);
-    this.element.append(field, this.status, this.prev, this.next, this.clearButton);
+    field.append(this.input, this.status, this.caseToggle, this.regexToggle, this.clearButton);
+    this.element.append(field, this.prev, this.next);
     this.setStatus(0, 0, null);
   }
 
@@ -108,7 +116,7 @@ export class FindWidget {
   setStatus(position: number, total: number, error: string | null): void {
     const empty = this.input.value === "";
     this.element.classList.toggle("find--error", error !== null);
-    this.input.title = error ?? "";
+    this.input.title = error ?? INPUT_TITLE;
 
     if (error !== null) {
       this.status.textContent = "Bad pattern";
