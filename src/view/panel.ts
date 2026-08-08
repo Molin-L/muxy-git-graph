@@ -3,7 +3,7 @@ import { canDropCommit } from "../graph/queries.ts";
 import type { GraphConfig, GraphLayout } from "../graph/types.ts";
 import * as repo from "../data/repo.ts";
 import { UNCOMMITTED, write } from "../data/repo.ts";
-import type { ChangedFile, Commit, PendingOperation, Ref, RepoState } from "../data/repo.ts";
+import type { ChangedFile, Commit, CommitDetails, PendingOperation, Ref, RepoState } from "../data/repo.ts";
 import { commitMenu, refMenu } from "../actions/menus.ts";
 import type { ActionContext } from "../actions/menus.ts";
 import { closeContextMenu, openContextMenu } from "./context-menu.ts";
@@ -185,6 +185,7 @@ export class Panel {
       this.pending = pending;
       this.digest = digest;
       this.statusLabel.textContent = "";
+      this.detailsCache.delete(UNCOMMITTED);
       this.reselect();
       this.render();
       this.renderBanner();
@@ -259,6 +260,27 @@ export class Panel {
   }
 
   private selectedHash: string | null = null;
+
+  /**
+   * A commit's hash is its content, so its details never change — a cache entry
+   * is correct forever and renders with zero round trips, which matters on a
+   * remote workspace where a fetch is two SSH round trips. The uncommitted entry
+   * is the one mutable case; it renders from cache instantly and refreshes in
+   * the background.
+   */
+  private readonly detailsCache = new Map<string, CommitDetails>();
+
+  /** Invalidates in-flight detail renders when the selection moves on. */
+  private detailsToken = 0;
+
+  private cacheDetails(key: string, details: CommitDetails): void {
+    this.detailsCache.delete(key);
+    this.detailsCache.set(key, details);
+    if (this.detailsCache.size > 200) {
+      const oldest = this.detailsCache.keys().next().value;
+      if (oldest !== undefined) this.detailsCache.delete(oldest);
+    }
+  }
 
   /* ------------------------------------------------------------- render --- */
 
@@ -425,14 +447,34 @@ export class Panel {
     this.rows?.refresh();
 
     const commit = this.state.commits[index];
+    const token = ++this.detailsToken;
+    const handlers = this.detailsHandlers(commit.hash, null);
+    const degradedNote = repo.isDegraded() && commit.hash !== UNCOMMITTED
+      ? "Per-commit file changes need a shell. muxy.git can only diff the working " +
+        "tree — no Muxy extension can list a commit's files on this workspace."
+      : undefined;
+
+    const cached = this.detailsCache.get(commit.hash);
+    if (cached !== undefined) {
+      renderCommitDetails(this.detailsHost, cached, handlers, null, degradedNote);
+      // Immutable content — the cached copy is final. Only the working tree moves.
+      if (commit.hash !== UNCOMMITTED) return;
+    } else {
+      // Instant skeleton from the log entry already in hand, so the pane never
+      // lingers on the previously selected commit while the fetch runs.
+      renderCommitDetails(this.detailsHost, skeletonDetails(commit), handlers, null,
+        degradedNote ?? "Loading changes…");
+    }
+
     try {
       const details = await repo.commitDetails(commit.hash, commit);
-      renderCommitDetails(this.detailsHost, details, this.detailsHandlers(commit.hash, null), null,
-        repo.isDegraded() && commit.hash !== UNCOMMITTED
-          ? "Per-commit file changes need a shell. muxy.git can only diff the working " +
-            "tree — no Muxy extension can list a commit's files on this workspace."
-          : undefined);
+      if (token !== this.detailsToken) return;
+      const unchanged = cached !== undefined &&
+        JSON.stringify(cached) === JSON.stringify(details);
+      this.cacheDetails(commit.hash, details);
+      if (!unchanged) renderCommitDetails(this.detailsHost, details, handlers, null, degradedNote);
     } catch (err) {
+      if (token !== this.detailsToken) return;
       this.detailsHost.replaceChildren(
         el("div", "details__empty", err instanceof Error ? err.message : String(err)));
     }
@@ -445,24 +487,38 @@ export class Panel {
 
     const from = this.state.commits[Math.max(this.selected, index)];
     const to = this.state.commits[Math.min(this.selected, index)];
+    const token = ++this.detailsToken;
+    const handlers = this.detailsHandlers(to.hash, { from: from.hash, to: to.hash });
+    const comparison = { from: from.hash, to: to.hash };
+    const empty: CommitDetails = {
+      hash: to.hash, parents: [], authorName: "", authorEmail: "", authorDate: "",
+      committerName: "", committerEmail: "", committerDate: "", body: "", files: [],
+    };
+
+    // Two fixed hashes — as immutable as a single commit.
+    const key = `cmp:${from.hash}..${to.hash}`;
+    const cached = this.detailsCache.get(key);
+    if (cached !== undefined) {
+      renderCommitDetails(this.detailsHost, cached, handlers, comparison);
+      return;
+    }
+    renderCommitDetails(this.detailsHost, empty, handlers, comparison, "Loading changes…");
+
     try {
       const files = await repo.comparisonFiles(from.hash, to.hash);
-      renderCommitDetails(
-        this.detailsHost,
-        {
-          hash: to.hash, parents: [], authorName: "", authorEmail: "", authorDate: "",
-          committerName: "", committerEmail: "", committerDate: "", body: "", files,
-        },
-        this.detailsHandlers(to.hash, { from: from.hash, to: to.hash }),
-        { from: from.hash, to: to.hash },
-      );
+      if (token !== this.detailsToken) return;
+      const details = { ...empty, files };
+      this.cacheDetails(key, details);
+      renderCommitDetails(this.detailsHost, details, handlers, comparison);
     } catch (err) {
+      if (token !== this.detailsToken) return;
       this.detailsHost.replaceChildren(
         el("div", "details__empty", err instanceof Error ? err.message : String(err)));
     }
   }
 
   private closeDetails(): void {
+    this.detailsToken++;
     this.selected = null;
     this.compareWith = null;
     this.selectedHash = null;
@@ -645,6 +701,23 @@ export class Panel {
     if (index === -1 || this.rows === null) return;
     this.scroller.scrollTop = Math.max(0, this.rows.topOf(index) - this.scroller.clientHeight / 2);
   }
+}
+
+/** Everything the log entry already knows, shown while the file list loads.
+ *  Committer mirrors author so the pane does not render a blank committer row. */
+function skeletonDetails(commit: Commit): CommitDetails {
+  return {
+    hash: commit.hash,
+    parents: commit.parents,
+    authorName: commit.authorName,
+    authorEmail: commit.authorEmail,
+    authorDate: commit.authorDate,
+    committerName: commit.authorName,
+    committerEmail: commit.authorEmail,
+    committerDate: commit.authorDate,
+    body: "",
+    files: [],
+  };
 }
 
 function iconButton(title: string, glyph: string, run: () => void): HTMLElement {
