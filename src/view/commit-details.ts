@@ -1,6 +1,6 @@
 import { UNCOMMITTED } from "../data/repo.ts";
 import type { ChangedFile, CommitDetails, FileStatus } from "../data/repo.ts";
-import { absoluteTime, copyToClipboard, el } from "./dom.ts";
+import { absoluteTime, copyToClipboard, el, openExternal } from "./dom.ts";
 import { openContextMenu } from "./context-menu.ts";
 
 export interface DetailsHandlers {
@@ -15,6 +15,7 @@ export interface ParsedMessage {
   readonly subject: string;
   readonly body: string;
   readonly coAuthors: readonly string[];
+  readonly claudeSessions: readonly string[];
 }
 
 /**
@@ -24,20 +25,29 @@ export interface ParsedMessage {
  */
 export function splitMessage(raw: string): ParsedMessage {
   const text = raw.replace(/\r\n/g, "\n").trim();
-  if (text === "") return { subject: "", body: "", coAuthors: [] };
+  if (text === "") return { subject: "", body: "", coAuthors: [], claudeSessions: [] };
 
   const newline = text.indexOf("\n");
   const subject = (newline === -1 ? text : text.slice(0, newline)).trim();
   const rest = newline === -1 ? "" : text.slice(newline + 1);
 
   const coAuthors: string[] = [];
+  const claudeSessions: string[] = [];
   const kept: string[] = [];
   for (const line of rest.split("\n")) {
-    const match = /^\s*co-authored-by:\s*(.+)$/i.exec(line);
-    if (match) coAuthors.push(match[1].trim());
-    else kept.push(line);
+    const coAuthor = /^\s*co-authored-by:\s*(.+)$/i.exec(line);
+    if (coAuthor) {
+      coAuthors.push(coAuthor[1].trim());
+      continue;
+    }
+    const session = /^\s*claude-session:\s*(.+)$/i.exec(line);
+    if (session) {
+      claudeSessions.push(session[1].trim());
+      continue;
+    }
+    kept.push(line);
   }
-  return { subject, body: kept.join("\n").trim(), coAuthors };
+  return { subject, body: kept.join("\n").trim(), coAuthors, claudeSessions };
 }
 
 const STATUS_LABEL: Record<FileStatus, string> = {
@@ -100,6 +110,9 @@ export function renderCommitDetails(
     }
     for (const coAuthor of message.coAuthors) {
       addMeta(meta, "Co-author", coAuthor);
+    }
+    for (const session of message.claudeSessions) {
+      addMeta(meta, "Session", sessionValue(session));
     }
     if (details.parents.length > 0) {
       addMeta(meta, "Parents", details.parents.map((p) => p.slice(0, 8)).join(", "));
@@ -180,12 +193,30 @@ function fileRow(file: ChangedFile, handlers: DetailsHandlers): HTMLElement {
   return row;
 }
 
+/** A Claude-Session URL renders as a short clickable link, not the full URL. */
+function sessionValue(session: string): string | HTMLElement {
+  if (!/^https?:\/\//i.test(session)) return session;
+  const segment = session.replace(/\/+$/, "").split("/").pop() ?? session;
+  const short = segment.length > 18 ? `${segment.slice(0, 8)}…${segment.slice(-4)}` : segment;
+  const link = el("a", "details__link", short);
+  link.href = session;
+  link.title = session;
+  link.addEventListener("click", (event) => {
+    event.preventDefault();
+    openExternal(session);
+  });
+  return link;
+}
+
 function identity(name: string, email: string): string {
   if (name !== "" && email !== "") return `${name} <${email}>`;
   return name !== "" ? name : email;
 }
 
-function addMeta(list: HTMLElement, label: string, value: string): void {
+function addMeta(list: HTMLElement, label: string, value: string | HTMLElement): void {
   list.appendChild(el("dt", undefined, label));
-  list.appendChild(el("dd", undefined, value));
+  const dd = el("dd");
+  if (typeof value === "string") dd.textContent = value;
+  else dd.appendChild(value);
+  list.appendChild(dd);
 }

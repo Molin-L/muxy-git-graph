@@ -97,6 +97,9 @@ export interface MuxyApi {
     get(key: string): Promise<unknown>;
     set(key: string, value: unknown): Promise<void>;
   };
+  browser?: {
+    open(args: { url: string; split?: boolean }): Promise<unknown>;
+  };
   notifications?: {
     post(args: { title: string; body?: string }): Promise<void>;
   };

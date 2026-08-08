@@ -32,5 +32,18 @@ test("CRLF and empty messages are handled", () => {
   const m = splitMessage("subject\r\n\r\nbody line\r\n");
   assert.equal(m.subject, "subject");
   assert.equal(m.body, "body line");
-  assert.deepEqual(splitMessage(""), { subject: "", body: "", coAuthors: [] });
+  assert.deepEqual(splitMessage(""),
+    { subject: "", body: "", coAuthors: [], claudeSessions: [] });
+});
+
+test("Claude-Session trailers become session fields and leave the body", () => {
+  const m = splitMessage(
+    "feat: agent work\n\nBody text.\n\n" +
+    "Claude-Session: https://claude.ai/code/session_01QhQSf2PHwjwDgAK6C7j3gn\n" +
+    "Co-authored-by: Claude <noreply@anthropic.com>\n",
+  );
+  assert.deepEqual(m.claudeSessions,
+    ["https://claude.ai/code/session_01QhQSf2PHwjwDgAK6C7j3gn"]);
+  assert.deepEqual(m.coAuthors, ["Claude <noreply@anthropic.com>"]);
+  assert.equal(m.body, "Body text.", "both trailer kinds leave the body");
 });

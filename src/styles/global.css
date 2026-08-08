@@ -393,6 +393,13 @@ body.resizing { cursor: col-resize; user-select: none; }
 }
 
 .details__meta dt { color: var(--muxy-foreground-muted); }
+
+.details__link {
+  color: var(--muxy-accent);
+  text-decoration: none;
+  cursor: pointer;
+}
+.details__link:hover { text-decoration: underline; }
 .details__meta dd { margin: 0; overflow: hidden; text-overflow: ellipsis; }
 
 .details__body {

@@ -55,3 +55,23 @@ export async function copyToClipboard(value: string): Promise<void> {
     area.remove();
   }
 }
+
+/**
+ * Opens a URL for the user. `muxy.browser.open` shows it in one of Muxy's own
+ * browser tabs and always runs in the app — unlike `muxy.exec(["open", …])`,
+ * which on a remote workspace would run `open` on the remote host.
+ */
+export function openExternal(url: string): void {
+  const muxy = globalThis.muxy;
+  if (muxy?.browser?.open) {
+    void Promise.resolve(muxy.browser.open({ url })).catch(() => {
+      void muxy.exec(["open", url]).catch(() => undefined);
+    });
+    return;
+  }
+  if (muxy) {
+    void muxy.exec(["open", url]).catch(() => undefined);
+    return;
+  }
+  window.open(url, "_blank");
+}

@@ -31,7 +31,8 @@
       "storage:read",
       "storage:write",
       "tabs:write",
-      "notifications:write"
+      "notifications:write",
+      "browser:write"
     ],
     "events": [
       "project.switched",
