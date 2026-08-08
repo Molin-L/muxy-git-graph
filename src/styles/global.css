@@ -372,17 +372,38 @@ select, input[type="text"] {
 .details--split .details__divider:hover { background: var(--muxy-accent-soft); }
 
 body.resizing { cursor: col-resize; user-select: none; }
-.details__title { flex: 1 1 auto; font-family: var(--mono); font-size: var(--font-emphasis); font-weight: 600; }
-.details__close { width: var(--control); height: var(--control); padding: 0; background: none; border: none; }
-
-/* The commit subject, promoted out of the message body. */
-.details__subject {
-  margin-top: var(--s3);
+.details__title {
+  flex: 1 1 auto;
+  min-width: 0;
   font-size: var(--font-emphasis);
   font-weight: 600;
-  line-height: 1.35;
-  overflow-wrap: anywhere;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
+.details__close { width: var(--control); height: var(--control); padding: 0; background: none; border: none; }
+
+.details__hash {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s2);
+  font-family: var(--mono);
+}
+
+.details__copy {
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: var(--font-footnote);
+  background: none;
+  border: none;
+  color: var(--muxy-foreground-muted);
+}
+
+.details__copy:hover:not(:disabled) { color: var(--muxy-accent); background: none; border: none; }
 
 .details__meta {
   display: grid;

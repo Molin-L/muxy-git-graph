@@ -68,6 +68,7 @@ export function renderCommitDetails(
   filesNote?: string,
 ): void {
   host.replaceChildren();
+  const message = splitMessage(details.body);
 
   const header = el("div", "details__header");
   const title = el("div", "details__title");
@@ -76,8 +77,9 @@ export function renderCommitDetails(
   } else if (details.hash === UNCOMMITTED) {
     title.textContent = "Uncommitted Changes";
   } else {
-    title.textContent = details.hash.slice(0, 8);
-    title.title = details.hash;
+    // The subject is the headline; the hash moves down into the metadata.
+    title.textContent = message.subject !== "" ? message.subject : details.hash.slice(0, 8);
+    title.title = message.subject;
   }
   const close = el("button", "details__close", "✕");
   close.title = "Close (Esc)";
@@ -92,12 +94,8 @@ export function renderCommitDetails(
   } else if (details.hash === UNCOMMITTED) {
     summary.appendChild(el("p", "details__note", "Changes in the working tree and index."));
   } else {
-    const message = splitMessage(details.body);
-    if (message.subject !== "") {
-      summary.appendChild(el("div", "details__subject", message.subject));
-    }
-
     const meta = el("dl", "details__meta");
+    addMeta(meta, "Commit", hashValue(details.hash));
     addMeta(meta, "Author", identity(details.authorName, details.authorEmail));
     addMeta(meta, "Date", absoluteTime(details.authorDate));
     if (details.committerName !== "" || details.committerEmail !== "") {
@@ -213,6 +211,22 @@ function sessionValue(session: string): string | HTMLElement {
     ]);
   });
   return link;
+}
+
+/** Short hash in mono, with a copy button for the full hash. */
+function hashValue(hash: string): HTMLElement {
+  const wrap = el("span", "details__hash");
+  const text = el("span", "details__hashtext", hash.slice(0, 8));
+  text.title = hash;
+  const copy = el("button", "details__copy", "⧉");
+  copy.title = "Copy full hash";
+  copy.addEventListener("click", () => {
+    void copyToClipboard(hash);
+    copy.textContent = "✓";
+    setTimeout(() => { copy.textContent = "⧉"; }, 1200);
+  });
+  wrap.append(text, copy);
+  return wrap;
 }
 
 function identity(name: string, email: string): string {
