@@ -187,6 +187,10 @@ select, input[type="text"] {
   color: var(--muxy-foreground-muted);
 }
 
+/* Centered over their columns, as upstream git-graph's table headers are —
+   flush-left labels sat glued to each column boundary. */
+.head .cell { text-align: center; }
+
 .cell {
   min-width: 0;
   overflow: hidden;
