@@ -380,6 +380,8 @@ body.resizing { cursor: col-resize; user-select: none; }
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  -webkit-user-select: text;
+  user-select: text;
 }
 .details__close { width: var(--control); height: var(--control); padding: 0; background: none; border: none; }
 
@@ -391,8 +393,8 @@ body.resizing { cursor: col-resize; user-select: none; }
 }
 
 .details__copy {
-  width: 18px;
-  height: 18px;
+  width: 16px;
+  height: 16px;
   padding: 0;
   display: inline-flex;
   align-items: center;
@@ -411,7 +413,13 @@ body.resizing { cursor: col-resize; user-select: none; }
   gap: var(--s1) var(--s4);
   margin: var(--s3) 0 0;
   font-size: var(--font-footnote);
+  /* Uniform row rhythm: values with controls (the hash's copy button) must not
+     make their row taller or float off the label's line. */
+  align-items: center;
 }
+
+.details__meta dt,
+.details__meta dd { line-height: 18px; }
 
 .details__meta dt { color: var(--muxy-foreground-muted); }
 
