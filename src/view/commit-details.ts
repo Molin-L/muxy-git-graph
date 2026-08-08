@@ -134,8 +134,15 @@ export function renderCommitDetails(
 
   const filesPane = el("div", "details__files");
   if (filesNote === undefined || details.files.length > 0) {
-    filesPane.appendChild(el("div", "details__filecount",
-      `${details.files.length} file${details.files.length === 1 ? "" : "s"} changed`));
+    // Mirrors the file-row grid: count in the status-badge column, label in the
+    // filename column.
+    const count = el("div", "details__filecount");
+    count.append(
+      el("span", "details__filecount-num", String(details.files.length)),
+      el("span", "details__filecount-label",
+        `file${details.files.length === 1 ? "" : "s"} changed`),
+    );
+    filesPane.appendChild(count);
   }
   if (details.files.length === 0) {
     filesPane.appendChild(el("div", "details__empty", filesNote ?? "No file changes."));

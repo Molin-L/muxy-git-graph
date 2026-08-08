@@ -471,12 +471,24 @@ body.resizing { cursor: col-resize; user-select: none; }
 .details__filecount {
   position: sticky;
   top: 0;
-  padding: var(--s2) 0;
+  display: flex;
+  align-items: center;
+  gap: var(--s3);
+  /* Same horizontal rhythm as .file, so the columns line up beneath. */
+  padding: var(--s2) var(--s3);
   background: var(--muxy-surface);
   font-size: var(--font-footnote);
   text-transform: uppercase;
   letter-spacing: 0.04em;
   color: var(--muxy-foreground-muted);
+}
+
+/* Sits in the status-badge column: same 14px centered mono slot. */
+.details__filecount-num {
+  flex: 0 0 auto;
+  min-width: 14px;
+  text-align: center;
+  font-family: var(--mono);
 }
 
 .details__files { display: flex; flex-direction: column; margin-top: var(--s2); }
