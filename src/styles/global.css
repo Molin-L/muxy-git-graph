@@ -486,9 +486,10 @@ body.resizing { cursor: col-resize; user-select: none; }
   display: flex;
   align-items: center;
   gap: var(--s3);
-  /* min-height, not height: a long file name wraps and grows the row. */
+  /* min-height, not height: the two-line rows size themselves. */
   min-height: var(--row-height);
-  padding: var(--s1) var(--s3);
+  /* Breathing room between rows without losing the compact list feel. */
+  padding: var(--s2) var(--s3);
   background: none;
   border: none;
   border-radius: var(--radius-chip);
