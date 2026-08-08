@@ -32,11 +32,13 @@ supported.
 - **Right-click uncommitted changes** to stash, reset, or clean.
 - **In-progress banner** with Abort and Continue when a merge, rebase, cherry-pick
   or revert is mid-flight — something upstream git-graph does not have.
-- **Find (`⌘F`)** across subjects, authors, hashes, branch and tag names, dates and
-  stash selectors, with match-case and regex toggles. Matches highlight in place and
-  `⏎`/`⇧⏎` step through them without disturbing the selection.
-- **Keyboard** — `⌘R` refresh, `⌘H` scroll to HEAD, `⌘F` find, `⌘G`/`⇧⌘G` next and
-  previous match, `↑`/`↓` move the selection, `Esc` close.
+- **A find bar under the topbar**, always there — type and matches highlight as you
+  go, across subjects, authors, hashes, branch and tag names, dates and stash
+  selectors, with match-case and regex toggles. `⏎`/`⇧⏎` step through matches
+  without disturbing the selection.
+- **Keyboard** — `⌘R` refresh, `⌘H` scroll to HEAD, `⌘F` jump to the find bar,
+  `⌘G`/`⇧⌘G` next and previous match, `↑`/`↓` move the selection, `Esc` clear the
+  search, then close the details pane.
 - Columns drop as the panel narrows, so it stays usable at any width.
 
 ## Building

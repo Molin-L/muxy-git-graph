@@ -6,7 +6,6 @@ export interface FindWidgetHandlers {
   search(query: string, options: FindOptions): void;
   /** Move to the previous (-1) or next (+1) match. */
   navigate(delta: -1 | 1): void;
-  close(): void;
   /** Options changed and are worth persisting. */
   optionsChanged(options: FindOptions): void;
 }
@@ -14,9 +13,16 @@ export interface FindWidgetHandlers {
 const DEBOUNCE_MS = 180;
 
 /**
- * The find bar. It owns its own chrome and nothing else — matching, match
- * ordering and scrolling all live in the Panel, because they are properties of
- * the Commit Feed rather than of this input (ADR-0018).
+ * The find bar. Always present, directly under the topbar.
+ *
+ * It does not open or close. ⌘F is a chord a panel webview competes with the
+ * host for, and a find that only exists once that chord lands is a find that
+ * some users never see at all. A permanent field costs one row and makes the
+ * shortcut a convenience rather than the entrance.
+ *
+ * It owns its own chrome and nothing else — matching, match ordering and
+ * scrolling all live in the Panel, because they are properties of the Commit
+ * Feed rather than of this input (ADR-0018).
  */
 export class FindWidget {
   readonly element = el("div", "find");
@@ -27,11 +33,11 @@ export class FindWidget {
   private readonly status = el("span", "find__status");
   private readonly prev: HTMLButtonElement;
   private readonly next: HTMLButtonElement;
+  private readonly clearButton: HTMLButtonElement;
 
   private readonly handlers: FindWidgetHandlers;
   private options: FindOptions;
   private debounce: number | undefined;
-  private open = false;
 
   constructor(handlers: FindWidgetHandlers, options: FindOptions) {
     this.handlers = handlers;
@@ -52,18 +58,16 @@ export class FindWidget {
 
     this.prev = stepButton("↑", "Previous match (⇧⏎)", () => this.handlers.navigate(-1));
     this.next = stepButton("↓", "Next match (⏎)", () => this.handlers.navigate(1));
-    const dismiss = stepButton("✕", "Close (Esc)", () => this.handlers.close());
-    dismiss.classList.add("find__close");
+    this.clearButton = stepButton("✕", "Clear (Esc)", () => {
+      this.clear();
+      this.input.focus();
+    });
+    this.clearButton.classList.add("find__clear");
 
     const field = el("div", "find__field");
     field.append(this.input, this.caseToggle, this.regexToggle);
-    this.element.append(field, this.status, this.prev, this.next, dismiss);
-    this.element.hidden = true;
+    this.element.append(field, this.status, this.prev, this.next, this.clearButton);
     this.setStatus(0, 0, null);
-  }
-
-  get isOpen(): boolean {
-    return this.open;
   }
 
   get query(): string {
@@ -79,21 +83,21 @@ export class FindWidget {
     return target === this.input;
   }
 
-  show(): void {
-    this.open = true;
-    this.element.hidden = false;
+  focus(): void {
     this.input.focus();
     this.input.select();
   }
 
-  hide(): void {
-    if (!this.open) return;
-    this.open = false;
-    this.element.hidden = true;
-    window.clearTimeout(this.debounce);
-    // The query is kept, so reopening resumes the last search; the Panel is told
-    // the search is empty so no highlights survive a close.
-    this.handlers.search("", this.options);
+  /**
+   * Empties the query and reports whether there was one. The Panel uses that to
+   * decide what Escape means: clearing a search first, closing the details pane
+   * only once there is no search left to clear.
+   */
+  clear(): boolean {
+    if (this.input.value === "") return false;
+    this.input.value = "";
+    this.flush();
+    return true;
   }
 
   /**
@@ -102,13 +106,14 @@ export class FindWidget {
    * @param error Why the query could not be run, if it could not.
    */
   setStatus(position: number, total: number, error: string | null): void {
+    const empty = this.input.value === "";
     this.element.classList.toggle("find--error", error !== null);
     this.input.title = error ?? "";
 
     if (error !== null) {
       this.status.textContent = "Bad pattern";
       this.status.title = error;
-    } else if (this.input.value === "") {
+    } else if (empty) {
       this.status.textContent = "";
       this.status.title = "";
     } else {
@@ -116,9 +121,9 @@ export class FindWidget {
       this.status.title = "";
     }
 
-    const idle = total === 0;
-    this.prev.disabled = idle;
-    this.next.disabled = idle;
+    this.prev.disabled = total === 0;
+    this.next.disabled = total === 0;
+    this.clearButton.disabled = empty;
   }
 
   private onKeyDown(event: KeyboardEvent): void {

@@ -124,13 +124,14 @@ select, input[type="text"] {
 
 /* ----------------------------------------------------------------- find --- */
 
-/* A row in the chrome stack rather than an overlay: the panel is narrow enough
-   that a floating widget would cover the column headers it is searching. */
+/* A permanent row in the chrome stack rather than an overlay. The panel is
+   narrow enough that a floating widget would cover the column headers it is
+   searching, and this row is always present, so the padding is kept tight. */
 .find {
   display: flex;
   align-items: center;
   gap: var(--s2);
-  padding: var(--s3) var(--s5);
+  padding: var(--s2) var(--s5);
   border-bottom: 1px solid var(--muxy-border);
   background: var(--muxy-surface);
   flex: 0 0 auto;
@@ -196,7 +197,7 @@ select, input[type="text"] {
 
 .find__step { flex: 0 0 auto; width: 20px; height: 20px; font-size: var(--font-footnote); }
 .find__step:hover:not(:disabled) { background: var(--muxy-hover); }
-.find__close { font-size: var(--font-body); }
+.find__clear { font-size: var(--font-body); }
 
 /* Matched text inside a row cell. Painted per row as it scrolls in. The explicit
    colour is for the Author and Commit cells, whose text is muted — a hit there

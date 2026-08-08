@@ -128,14 +128,9 @@ export class Panel {
       void this.reload();
     });
 
-    // Find has a button as well as a shortcut: ⌘F is a chord the host may claim
-    // before a panel webview ever sees it, and a feature reachable only by a
-    // shortcut that silently does nothing is indistinguishable from a missing one.
-    const findButton = iconButton("Find (⌘F)", "⌕", () => this.toggleFind());
-
     const topbar = el("div", "topbar");
     topbar.append(this.branchLabel, this.statusLabel, el("span", "topbar__spacer"),
-      findButton, fetchButton, refreshButton);
+      fetchButton, refreshButton);
 
     this.banner.hidden = true;
     this.svg.setAttribute("class", "graph");
@@ -156,7 +151,6 @@ export class Panel {
     this.find = new FindWidget({
       search: (query, options) => this.runSearch(query, options),
       navigate: (delta) => this.navigateFind(delta),
-      close: () => this.closeFind(),
       optionsChanged: (options) => {
         this.findOptions = options;
         void globalThis.muxy?.storage.set("find.options", options).catch(() => undefined);
@@ -670,21 +664,9 @@ export class Panel {
 
   /* --------------------------------------------------------------- find --- */
 
-  private openFind(): void {
-    if (this.find === null) return;
-    this.find.show();
-    // The query survives a close, so reopening restores the matches with it.
-    if (this.find.query !== "") this.runSearch(this.find.query, this.find.currentOptions);
-  }
-
-  private closeFind(): void {
-    this.find?.hide();
-  }
-
-  /** The topbar button: the same key twice should not leave the bar stuck open. */
-  private toggleFind(): void {
-    if (this.find?.isOpen) this.closeFind();
-    else this.openFind();
+  /** ⌘F does not summon the bar — it is always there — it just takes you to it. */
+  private focusFind(): void {
+    this.find?.focus();
   }
 
   /**
@@ -958,15 +940,14 @@ export class Panel {
 
     if (event.key === "Escape") {
       closeContextMenu();
-      // Find is the innermost surface: it closes before the details pane, so one
-      // Escape never dismisses both.
-      if (this.find?.isOpen) this.closeFind();
-      else if (this.selected !== null) this.closeDetails();
+      // Innermost first: an active search is discarded before the details pane,
+      // so one Escape never dismisses both.
+      if (this.find?.clear() !== true && this.selected !== null) this.closeDetails();
       return;
     }
     if (meta && is("f")) {
       claim();
-      this.openFind();
+      this.focusFind();
       return;
     }
     if (meta && is("g")) {
