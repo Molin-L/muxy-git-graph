@@ -95,9 +95,18 @@ export function renderCommitDetails(
     summary.appendChild(el("p", "details__note", "Changes in the working tree and index."));
   } else {
     const meta = el("dl", "details__meta");
+
+    // Author leads, avatar in the label column, name over date in the value.
+    const avatarCell = el("dt", "details__avatarcell");
+    avatarCell.appendChild(avatar(details.authorName));
+    const authorCell = el("dd", "details__author");
+    authorCell.append(
+      el("div", "details__authorname", identity(details.authorName, details.authorEmail)),
+      el("div", "details__authordate", absoluteTime(details.authorDate)),
+    );
+    meta.append(avatarCell, authorCell);
+
     addMeta(meta, "Commit", hashValue(details.hash));
-    addMeta(meta, "Author", identity(details.authorName, details.authorEmail));
-    addMeta(meta, "Date", absoluteTime(details.authorDate));
     if (details.committerName !== "" || details.committerEmail !== "") {
       addMeta(meta, "Committer", identity(details.committerName, details.committerEmail));
       // A committed date only differs after rebase/cherry-pick/amend — the
@@ -211,6 +220,22 @@ function sessionValue(session: string): string | HTMLElement {
     ]);
   });
   return link;
+}
+
+/** Initials avatar, coloured from the author's name — no network, no consent. */
+function avatar(name: string): HTMLElement {
+  const words = name.trim().split(/\s+/).filter(Boolean);
+  const initials = words.length === 0
+    ? "?"
+    : words.length === 1
+      ? words[0].slice(0, 2).toUpperCase()
+      : (words[0][0] + words[words.length - 1][0]).toUpperCase();
+  let hash = 0;
+  for (const ch of name) hash = (hash * 31 + ch.charCodeAt(0)) >>> 0;
+  const badge = el("span", "details__avatar", initials);
+  badge.style.background = `var(--lane-${hash % 6})`;
+  badge.title = name;
+  return badge;
 }
 
 /** Short hash in mono, with a copy button for the full hash. */

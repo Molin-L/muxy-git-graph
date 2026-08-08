@@ -421,6 +421,23 @@ body.resizing { cursor: col-resize; user-select: none; }
 .details__meta dt,
 .details__meta dd { line-height: 18px; }
 
+.details__avatarcell { display: flex; justify-content: center; }
+
+.details__avatar {
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: var(--font-caption);
+  font-weight: 700;
+  color: var(--muxy-background);
+}
+
+.details__authorname { font-weight: 600; }
+.details__authordate { color: var(--muxy-foreground-muted); }
+
 .details__meta dt { color: var(--muxy-foreground-muted); }
 
 .details__link {
@@ -570,6 +587,24 @@ body.resizing { cursor: col-resize; user-select: none; }
 .dialog__confirm { background: var(--muxy-accent); color: var(--muxy-background); border-color: transparent; }
 .dialog__confirm:hover:not(:disabled) { background: var(--muxy-accent); opacity: 0.88; }
 .dialog__confirm--danger { background: var(--muxy-diff-remove); }
+
+/* ----------------------------------------------------------- scrollbars --- */
+
+/* Overlay-style: invisible until the scrolling container is hovered, so idle
+   panes show no bars. */
+::-webkit-scrollbar { width: 9px; height: 9px; background: transparent; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-corner { background: transparent; }
+
+::-webkit-scrollbar-thumb {
+  background-color: transparent;
+  border-radius: 5px;
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+
+*:hover::-webkit-scrollbar-thumb { background-color: var(--muxy-border); }
+::-webkit-scrollbar-thumb:hover { background-color: var(--muxy-foreground-muted); }
 
 @media (prefers-reduced-motion: reduce) {
   * { transition: none !important; animation: none !important; }
