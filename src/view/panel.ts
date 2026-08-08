@@ -585,8 +585,28 @@ export class Panel {
     this.pollTimer = window.setInterval(() => void this.pollNow(), interval);
   }
 
+  private probeRetryAt = 0;
+  private probeRetryDelay = 8_000;
+
   private async pollNow(): Promise<void> {
     if (this.busy) return;
+
+    // Degraded is often transient: Muxy's workspace context flips back to remote
+    // when the SSH workspace is re-selected, and no event announces that to a
+    // webview. Retry the transport with backoff so the panel recovers on its own
+    // instead of sitting in read-only mode until someone presses refresh.
+    if (repo.isDegraded()) {
+      const now = Date.now();
+      if (now >= this.probeRetryAt) {
+        this.probeRetryAt = now + this.probeRetryDelay;
+        this.probeRetryDelay = Math.min(this.probeRetryDelay * 2, 120_000);
+        repo.resetCapabilities();
+        await this.reload();
+        if (!repo.isDegraded()) this.probeRetryDelay = 8_000;
+        return;
+      }
+    }
+
     try {
       const digest = await repo.refDigest();
       if (digest !== this.digest) await this.reload();
