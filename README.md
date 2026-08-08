@@ -32,8 +32,11 @@ supported.
 - **Right-click uncommitted changes** to stash, reset, or clean.
 - **In-progress banner** with Abort and Continue when a merge, rebase, cherry-pick
   or revert is mid-flight — something upstream git-graph does not have.
-- **Keyboard** — `⌘R` refresh, `⌘H` scroll to HEAD, `↑`/`↓` move the selection,
-  `Esc` close.
+- **Find (`⌘F`)** across subjects, authors, hashes, branch and tag names, dates and
+  stash selectors, with match-case and regex toggles. Matches highlight in place and
+  `⏎`/`⇧⏎` step through them without disturbing the selection.
+- **Keyboard** — `⌘R` refresh, `⌘H` scroll to HEAD, `⌘F` find, `⌘G`/`⇧⌘G` next and
+  previous match, `↑`/`↓` move the selection, `Esc` close.
 - Columns drop as the panel narrows, so it stays usable at any width.
 
 ## Building
@@ -66,7 +69,7 @@ npm run typecheck
 
 ## Design decisions
 
-Fourteen ADRs in [`docs/adr/`](./docs/adr/). The ones that will surprise you:
+Eighteen ADRs in [`docs/adr/`](./docs/adr/). The ones that will surprise you:
 
 - **[0002](./docs/adr/0002-data-layer-split.md)** — reads go through `muxy.exec`,
   writes through `muxy.git`. Split by intent, not capability.
@@ -78,6 +81,8 @@ Fourteen ADRs in [`docs/adr/`](./docs/adr/). The ones that will surprise you:
   there being a polling loop.
 - **[0014](./docs/adr/0014-right-panel-not-tab.md)** — right panel, superseding the
   tab decision in ADR-0003.
+- **[0018](./docs/adr/0018-find-matches-the-feed-not-the-dom.md)** — find searches
+  the commit data, never the DOM, and highlights as rows render.
 
 ## Remote (SSH) workspaces
 
@@ -92,8 +97,8 @@ the right repository either, the panel degrades to read-only history via
 
 ## Not yet built
 
-The find widget (`⌘F`), the repository settings widget (remotes, issue linking),
-avatars, code-review tracking, and configurable settings. See
+The repository settings widget (remotes, issue linking), avatars, code-review
+tracking, and configurable settings. See
 [ADR-0004](./docs/adr/0004-v1-includes-destructive-actions.md) for the tier
 breakdown, and [`docs/spike-findings.md`](./docs/spike-findings.md) for the one
 open architectural risk.

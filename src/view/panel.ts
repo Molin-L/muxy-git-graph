@@ -11,6 +11,9 @@ import { confirmDialog } from "./dialog.ts";
 import { renderCommitDetails } from "./commit-details.ts";
 import { renderGraph } from "./render-graph.ts";
 import { VirtualRows } from "./virtual-rows.ts";
+import { FindWidget } from "./find-widget.ts";
+import { compile, search, segment } from "./find.ts";
+import type { FindOptions } from "./find.ts";
 import { absoluteTime, copyToClipboard, el, relativeTime } from "./dom.ts";
 
 const ROW_HEIGHT = 24;
@@ -54,10 +57,21 @@ export class Panel {
   private state: RepoState = { commits: [], head: null, headBranch: "", moreAvailable: false };
   private layout: GraphLayout | null = null;
   private rows: VirtualRows | null = null;
+  private find: FindWidget | null = null;
   private columns: Columns = { date: true, author: true, hash: true };
 
   private selected: number | null = null;
   private compareWith: number | null = null;
+
+  private findOptions: FindOptions = { caseSensitive: false, regex: false };
+  /** Global pattern used to highlight; null whenever no search is running. */
+  private findPattern: RegExp | null = null;
+  /** Commit indices that match, newest first. */
+  private findHits: number[] = [];
+  /** Position within `findHits`, or -1 when there is nothing to step through. */
+  private findAt = -1;
+  private findError: string | null = null;
+
   private loaded = INITIAL_LOAD;
   private remotes: string[] = [];
   private pending: PendingOperation = null;
@@ -72,8 +86,10 @@ export class Panel {
   }
 
   async start(): Promise<void> {
+    // Restores run first so the find bar is built with the user's last toggles
+    // rather than being retrofitted with them a frame later.
+    await Promise.all([this.restoreSplit(), this.restoreDetailsCache(), this.restoreFindOptions()]);
     this.build();
-    await Promise.all([this.restoreSplit(), this.restoreDetailsCache()]);
     await this.reload();
     this.subscribe();
   }
@@ -86,6 +102,18 @@ export class Panel {
       }
     } catch { /* first run */ }
     this.detailsHost.style.setProperty("--cdv-split", `${(this.splitFraction * 100).toFixed(2)}%`);
+  }
+
+  private async restoreFindOptions(): Promise<void> {
+    try {
+      const stored = await globalThis.muxy?.storage.get("find.options");
+      if (stored === null || typeof stored !== "object") return;
+      const { caseSensitive, regex } = stored as Partial<FindOptions>;
+      this.findOptions = {
+        caseSensitive: caseSensitive === true,
+        regex: regex === true,
+      };
+    } catch { /* first run */ }
   }
 
   /* ------------------------------------------------------------- chrome --- */
@@ -120,8 +148,18 @@ export class Panel {
     this.content.append(this.graphClip, this.rowsHost, this.detailsHost);
     this.scroller.append(this.head, this.content);
 
+    this.find = new FindWidget({
+      search: (query, options) => this.runSearch(query, options),
+      navigate: (delta) => this.navigateFind(delta),
+      close: () => this.closeFind(),
+      optionsChanged: (options) => {
+        this.findOptions = options;
+        void globalThis.muxy?.storage.set("find.options", options).catch(() => undefined);
+      },
+    }, this.findOptions);
+
     this.notice.hidden = true;
-    this.root.append(topbar, this.banner, this.notice, this.scroller);
+    this.root.append(topbar, this.find.element, this.banner, this.notice, this.scroller);
 
     this.rows = new VirtualRows({
       scroller: this.scroller,
@@ -187,6 +225,7 @@ export class Panel {
       this.statusLabel.textContent = "";
       this.detailsCache.delete(UNCOMMITTED);
       this.reselect();
+      this.recomputeFind();
       this.render();
       this.renderBanner();
 
@@ -440,14 +479,16 @@ export class Panel {
     element.classList.toggle("row--selected", index === this.selected);
     element.classList.toggle("row--compare", index === this.compareWith);
     element.classList.toggle("row--head", commit.hash === this.state.head);
+    element.classList.toggle("row--find",
+      this.findAt > -1 && this.findHits[this.findAt] === index);
 
     refs.replaceChildren(...this.refChips(commit));
-    subject.textContent = commit.subject;
+    this.paint(subject, commit.subject);
     subject.title = commit.subject;
     date.textContent = commit.hash === UNCOMMITTED ? "" : relativeTime(commit.authorDate);
     date.title = absoluteTime(commit.authorDate);
-    author.textContent = commit.authorName;
-    hash.textContent = commit.hash === UNCOMMITTED ? "" : commit.hash.slice(0, 7);
+    this.paint(author, commit.authorName);
+    this.paint(hash, commit.hash === UNCOMMITTED ? "" : commit.hash.slice(0, 7));
   }
 
   /**
@@ -492,7 +533,8 @@ export class Panel {
   }
 
   private refChip(ref: Ref, commit: Commit): HTMLElement {
-    const chip = el("span", `ref ref--${ref.kind}`, ref.name);
+    const chip = el("span", `ref ref--${ref.kind}`);
+    this.paint(chip, ref.name);
     chip.title = `${ref.name} — click to copy, right-click for actions`;
     chip.addEventListener("click", (event) => {
       event.stopPropagation();
@@ -602,14 +644,126 @@ export class Panel {
       return;
     }
     void this.select(index);
-    if (this.rows !== null) {
-      const top = this.rows.topOf(index);
-      const viewTop = this.scroller.scrollTop;
-      const viewBottom = viewTop + this.scroller.clientHeight - DETAILS_HEIGHT;
-      if (top < viewTop || top > viewBottom) {
-        this.scroller.scrollTop = Math.max(0, top - 3 * ROW_HEIGHT);
-      }
+    this.scrollRowIntoView(index);
+  }
+
+  /** Scrolls only when the row is off screen, so it never fights the user. */
+  private scrollRowIntoView(index: number): void {
+    if (this.rows === null) return;
+    const top = this.rows.topOf(index);
+    const viewTop = this.scroller.scrollTop;
+    // An open Commit Details pane covers the bottom of the viewport.
+    const occluded = this.selected === null ? 0 : DETAILS_HEIGHT;
+    const viewBottom = viewTop + this.scroller.clientHeight - occluded;
+    if (top < viewTop || top > viewBottom) {
+      this.scroller.scrollTop = Math.max(0, top - 3 * ROW_HEIGHT);
     }
+  }
+
+  /* --------------------------------------------------------------- find --- */
+
+  private openFind(): void {
+    if (this.find === null) return;
+    this.find.show();
+    // The query survives a close, so reopening restores the matches with it.
+    if (this.find.query !== "") this.runSearch(this.find.query, this.find.currentOptions);
+  }
+
+  private closeFind(): void {
+    this.find?.hide();
+  }
+
+  /**
+   * Runs a query against the Commit Feed. Matching never touches the DOM: rows
+   * are recycled as they scroll (ADR-0007), so the feed is the only place a
+   * complete history exists to search (ADR-0018).
+   */
+  private runSearch(query: string, options: FindOptions): void {
+    this.findOptions = options;
+    const pattern = compile(query, options);
+
+    if (pattern === null) {
+      this.findPattern = null;
+      this.findError = null;
+      this.applyHits([], null);
+    } else if (!pattern.ok) {
+      // Keep the previous highlights off screen rather than half-applying a
+      // pattern the user is still typing.
+      this.findPattern = null;
+      this.findError = pattern.error;
+      this.applyHits([], null);
+    } else {
+      this.findPattern = pattern.all;
+      this.findError = null;
+      this.applyHits(search(this.state.commits, pattern.test), this.currentMatchHash());
+    }
+
+    this.syncFindStatus();
+    this.rows?.refresh();
+    if (this.findAt > -1) this.scrollRowIntoView(this.findHits[this.findAt]);
+  }
+
+  /** Re-runs the active query after the Commit Feed changed underneath it. */
+  private recomputeFind(): void {
+    if (this.findPattern === null) return;
+    const pattern = compile(this.find?.query ?? "", this.findOptions);
+    if (pattern === null || !pattern.ok) return;
+    this.applyHits(search(this.state.commits, pattern.test), this.currentMatchHash());
+    this.syncFindStatus();
+  }
+
+  /**
+   * Adopts a new match set, staying on the same commit when it is still matched
+   * — a poll that adds a commit at the top must not move the user's position.
+   */
+  private applyHits(hits: number[], preferHash: string | null): void {
+    this.findHits = hits;
+    if (hits.length === 0) {
+      this.findAt = -1;
+      return;
+    }
+    const at = preferHash === null
+      ? -1
+      : hits.findIndex((index) => this.state.commits[index]?.hash === preferHash);
+    this.findAt = at === -1 ? 0 : at;
+  }
+
+  private currentMatchHash(): string | null {
+    if (this.findAt < 0) return null;
+    return this.state.commits[this.findHits[this.findAt]]?.hash ?? null;
+  }
+
+  private navigateFind(delta: -1 | 1): void {
+    if (this.findHits.length === 0) return;
+    const count = this.findHits.length;
+    this.findAt = (this.findAt + delta + count) % count;
+    this.syncFindStatus();
+    this.rows?.refresh();
+    this.scrollRowIntoView(this.findHits[this.findAt]);
+  }
+
+  private syncFindStatus(): void {
+    this.find?.setStatus(this.findAt + 1, this.findHits.length, this.findError);
+  }
+
+  /**
+   * Writes text into a cell, wrapping the matched runs when a search is active.
+   * Called from `renderRow`, so a row recycled into view is highlighted on
+   * arrival and there is no highlight state to tear down on close.
+   */
+  private paint(host: HTMLElement, text: string): void {
+    if (this.findPattern === null || text === "") {
+      host.textContent = text;
+      return;
+    }
+    const parts = segment(text, this.findPattern);
+    if (parts.length === 1 && !parts[0].hit) {
+      host.textContent = text;
+      return;
+    }
+    host.replaceChildren(...parts.map((part) => part.hit
+      ? el("span", "find__hit", part.text)
+      : document.createTextNode(part.text)));
   }
 
   private closeDetails(): void {
@@ -771,7 +925,20 @@ export class Panel {
     const meta = event.metaKey || event.ctrlKey;
     if (event.key === "Escape") {
       closeContextMenu();
-      if (this.selected !== null) this.closeDetails();
+      // Find is the innermost surface: it closes before the details pane, so one
+      // Escape never dismisses both.
+      if (this.find?.isOpen) this.closeFind();
+      else if (this.selected !== null) this.closeDetails();
+      return;
+    }
+    if (meta && event.key.toLowerCase() === "f") {
+      event.preventDefault();
+      this.openFind();
+      return;
+    }
+    if (meta && event.key.toLowerCase() === "g") {
+      event.preventDefault();
+      this.navigateFind(event.shiftKey ? -1 : 1);
       return;
     }
     if (meta && event.key.toLowerCase() === "r") {
@@ -785,6 +952,8 @@ export class Panel {
       this.scrollToHead();
       return;
     }
+    // Arrows belong to the text cursor while the find input has focus.
+    if (this.find?.owns(event.target)) return;
     if (this.selected !== null && (event.key === "ArrowDown" || event.key === "ArrowUp")) {
       event.preventDefault();
       const next = this.selected + (event.key === "ArrowDown" ? 1 : -1);

@@ -122,6 +122,101 @@ select, input[type="text"] {
   border-radius: var(--radius);
 }
 
+/* ----------------------------------------------------------------- find --- */
+
+/* A row in the chrome stack rather than an overlay: the panel is narrow enough
+   that a floating widget would cover the column headers it is searching. */
+.find {
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+  padding: var(--s3) var(--s5);
+  border-bottom: 1px solid var(--muxy-border);
+  background: var(--muxy-surface);
+  flex: 0 0 auto;
+}
+
+/* The toggles sit inside the field's border, so the three read as one control. */
+.find__field {
+  display: flex;
+  align-items: center;
+  gap: var(--s1);
+  flex: 1 1 auto;
+  min-width: 0;
+  padding-right: var(--s1);
+  background: var(--muxy-background);
+  border: 1px solid var(--muxy-border);
+  border-radius: var(--radius);
+}
+
+.find__field:focus-within { border-color: var(--muxy-accent); }
+.find--error .find__field { border-color: var(--muxy-diff-remove); }
+
+.find__input {
+  flex: 1 1 auto;
+  min-width: 0;
+  height: 22px;
+  padding: 0 var(--s3);
+  font: inherit;
+  font-size: var(--font-body);
+  color: var(--muxy-foreground);
+  background: none;
+  border: 0;
+  outline: none;
+  -webkit-user-select: text;
+  user-select: text;
+}
+
+.find__toggle {
+  flex: 0 0 auto;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  font-family: var(--mono);
+  font-size: var(--font-caption);
+  line-height: 20px;
+  color: var(--muxy-foreground-muted);
+  background: none;
+  border: 0;
+  border-radius: var(--radius-chip);
+}
+
+.find__toggle:hover:not(:disabled) { background: var(--muxy-hover); border-color: transparent; }
+.find__toggle--on { background: var(--muxy-accent-soft); color: var(--muxy-accent); }
+
+.find__status {
+  flex: 0 0 auto;
+  font-size: var(--font-footnote);
+  color: var(--muxy-foreground-muted);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.find--error .find__status { color: var(--muxy-diff-remove); }
+
+.find__step { flex: 0 0 auto; width: 20px; height: 20px; font-size: var(--font-footnote); }
+.find__step:hover:not(:disabled) { background: var(--muxy-hover); }
+.find__close { font-size: var(--font-body); }
+
+/* Matched text inside a row cell. Painted per row as it scrolls in. The explicit
+   colour is for the Author and Commit cells, whose text is muted — a hit there
+   should read at full contrast. */
+.find__hit {
+  background: var(--muxy-accent-soft);
+  box-shadow: inset 0 0 0 1px var(--muxy-accent);
+  border-radius: var(--radius-chip);
+  color: var(--muxy-foreground);
+}
+
+/* A ref chip is already accent-soft, so the same treatment would be invisible on
+   it — exactly the case that matters, since branch names are worth searching for.
+   Invert instead. */
+.ref .find__hit {
+  background: var(--muxy-accent);
+  color: var(--muxy-background);
+  box-shadow: none;
+}
+
 /* --------------------------------------------------------------- banner --- */
 
 .banner {
@@ -256,6 +351,10 @@ select, input[type="text"] {
 .row--selected { background: var(--muxy-hover); box-shadow: inset 2px 0 0 var(--muxy-accent); }
 .row--compare { background: var(--muxy-accent-soft); }
 .row--head .row__subject { font-weight: 600; }
+
+/* The current find match. Marks the row without claiming selection — stepping
+   through matches does not open the Commit Details pane. */
+.row--find { box-shadow: inset 0 0 0 1px var(--muxy-accent); }
 
 .row__subject {
   flex: 1 1 auto;
