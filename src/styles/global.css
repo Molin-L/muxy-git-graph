@@ -375,6 +375,15 @@ body.resizing { cursor: col-resize; user-select: none; }
 .details__title { flex: 1 1 auto; font-family: var(--mono); font-size: var(--font-emphasis); font-weight: 600; }
 .details__close { width: var(--control); height: var(--control); padding: 0; background: none; border: none; }
 
+/* The commit subject, promoted out of the message body. */
+.details__subject {
+  margin-top: var(--s3);
+  font-size: var(--font-emphasis);
+  font-weight: 600;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+
 .details__meta {
   display: grid;
   grid-template-columns: auto 1fr;

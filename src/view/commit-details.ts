@@ -11,6 +11,35 @@ export interface DetailsHandlers {
   resizeEnd(): void;
 }
 
+export interface ParsedMessage {
+  readonly subject: string;
+  readonly body: string;
+  readonly coAuthors: readonly string[];
+}
+
+/**
+ * Splits a raw commit message (`%B`) into subject, body and Co-authored-by
+ * trailers. The trailers are surfaced as structured fields, so they are removed
+ * from the rendered body rather than shown twice.
+ */
+export function splitMessage(raw: string): ParsedMessage {
+  const text = raw.replace(/\r\n/g, "\n").trim();
+  if (text === "") return { subject: "", body: "", coAuthors: [] };
+
+  const newline = text.indexOf("\n");
+  const subject = (newline === -1 ? text : text.slice(0, newline)).trim();
+  const rest = newline === -1 ? "" : text.slice(newline + 1);
+
+  const coAuthors: string[] = [];
+  const kept: string[] = [];
+  for (const line of rest.split("\n")) {
+    const match = /^\s*co-authored-by:\s*(.+)$/i.exec(line);
+    if (match) coAuthors.push(match[1].trim());
+    else kept.push(line);
+  }
+  return { subject, body: kept.join("\n").trim(), coAuthors };
+}
+
 const STATUS_LABEL: Record<FileStatus, string> = {
   A: "Added", M: "Modified", D: "Deleted", R: "Renamed", C: "Copied", U: "Conflicted", "?": "Untracked",
 };
@@ -53,17 +82,33 @@ export function renderCommitDetails(
   } else if (details.hash === UNCOMMITTED) {
     summary.appendChild(el("p", "details__note", "Changes in the working tree and index."));
   } else {
+    const message = splitMessage(details.body);
+    if (message.subject !== "") {
+      summary.appendChild(el("div", "details__subject", message.subject));
+    }
+
     const meta = el("dl", "details__meta");
-    addMeta(meta, "Author", `${details.authorName} <${details.authorEmail}>`);
+    addMeta(meta, "Author", identity(details.authorName, details.authorEmail));
     addMeta(meta, "Date", absoluteTime(details.authorDate));
-    if (details.committerName !== details.authorName) {
-      addMeta(meta, "Committer", `${details.committerName} <${details.committerEmail}>`);
+    if (details.committerName !== "" || details.committerEmail !== "") {
+      addMeta(meta, "Committer", identity(details.committerName, details.committerEmail));
+      // A committed date only differs after rebase/cherry-pick/amend — the
+      // interesting case, so it is only shown then.
+      if (details.committerDate !== "" && details.committerDate !== details.authorDate) {
+        addMeta(meta, "Committed", absoluteTime(details.committerDate));
+      }
+    }
+    for (const coAuthor of message.coAuthors) {
+      addMeta(meta, "Co-author", coAuthor);
     }
     if (details.parents.length > 0) {
       addMeta(meta, "Parents", details.parents.map((p) => p.slice(0, 8)).join(", "));
     }
     summary.appendChild(meta);
-    if (details.body !== "") summary.appendChild(el("pre", "details__body", details.body));
+
+    if (message.body !== "") {
+      summary.appendChild(el("pre", "details__body", message.body));
+    }
   }
 
   const filesPane = el("div", "details__files");
@@ -133,6 +178,11 @@ function fileRow(file: ChangedFile, handlers: DetailsHandlers): HTMLElement {
     ]);
   });
   return row;
+}
+
+function identity(name: string, email: string): string {
+  if (name !== "" && email !== "") return `${name} <${email}>`;
+  return name !== "" ? name : email;
 }
 
 function addMeta(list: HTMLElement, label: string, value: string): void {

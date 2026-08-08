@@ -760,7 +760,7 @@ function skeletonDetails(commit: Commit): CommitDetails {
     committerName: commit.authorName,
     committerEmail: commit.authorEmail,
     committerDate: commit.authorDate,
-    body: "",
+    body: commit.subject,
     files: [],
   };
 }
