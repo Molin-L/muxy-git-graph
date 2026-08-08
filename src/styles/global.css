@@ -486,8 +486,9 @@ body.resizing { cursor: col-resize; user-select: none; }
   display: flex;
   align-items: center;
   gap: var(--s3);
-  height: var(--row-height);
-  padding: 0 var(--s3);
+  /* min-height, not height: a long file name wraps and grows the row. */
+  min-height: var(--row-height);
+  padding: var(--s1) var(--s3);
   background: none;
   border: none;
   border-radius: var(--radius-chip);
@@ -497,7 +498,14 @@ body.resizing { cursor: col-resize; user-select: none; }
 }
 
 .file:hover { background: var(--muxy-hover); border-color: transparent; }
-.file__name { flex: 0 0 auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* Wraps rather than truncates when space runs out. */
+.file__name {
+  flex: 0 1 auto;
+  min-width: 0;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
 .file__dir {
   flex: 1 1 auto;
   min-width: 0;
@@ -510,6 +518,8 @@ body.resizing { cursor: col-resize; user-select: none; }
   text-align: left;
 }
 
+/* Pinned to the right edge and never squeezed or wrapped — the directory
+   shrinks first, then the name wraps. */
 .file__stats {
   margin-left: auto;
   flex: 0 0 auto;
@@ -517,6 +527,7 @@ body.resizing { cursor: col-resize; user-select: none; }
   gap: var(--s2);
   font-family: var(--mono);
   font-size: var(--font-caption);
+  white-space: nowrap;
 }
 
 .file__add { color: var(--muxy-diff-add); }
