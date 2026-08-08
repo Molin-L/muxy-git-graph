@@ -506,13 +506,14 @@ body.resizing { cursor: col-resize; user-select: none; }
   min-width: 0;
   display: flex;
   flex-direction: column;
-  gap: 1px;
+  gap: var(--s1);
 }
 
 .file__name {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  line-height: 15px;
 }
 .file__dir {
   min-width: 0;
@@ -524,6 +525,10 @@ body.resizing { cursor: col-resize; user-select: none; }
   /* rtl ellipsis keeps the deepest directories — the informative end — visible. */
   direction: rtl;
   text-align: left;
+  /* Tight natural line-height glued the path to the row's bottom edge; matching
+     the name's rhythm gives it the same breathing room below as above. */
+  line-height: 15px;
+  padding-bottom: 1px;
 }
 
 /* Pinned to the right edge and never squeezed or wrapped — the directory
