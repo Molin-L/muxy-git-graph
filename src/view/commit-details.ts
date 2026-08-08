@@ -193,17 +193,24 @@ function fileRow(file: ChangedFile, handlers: DetailsHandlers): HTMLElement {
   return row;
 }
 
-/** A Claude-Session URL renders as a short clickable link, not the full URL. */
+/** A Claude-Session URL renders as a named link; the URL itself lives in the
+ *  tooltip and behind right-click → copy. */
 function sessionValue(session: string): string | HTMLElement {
   if (!/^https?:\/\//i.test(session)) return session;
-  const segment = session.replace(/\/+$/, "").split("/").pop() ?? session;
-  const short = segment.length > 18 ? `${segment.slice(0, 8)}…${segment.slice(-4)}` : segment;
-  const link = el("a", "details__link", short);
+  const link = el("a", "details__link", "Claude Session");
   link.href = session;
   link.title = session;
   link.addEventListener("click", (event) => {
     event.preventDefault();
     openExternal(session);
+  });
+  link.addEventListener("contextmenu", (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    openContextMenu(event.clientX, event.clientY, [
+      { label: "Open", run: () => openExternal(session) },
+      { label: "Copy URL to Clipboard", run: () => copyToClipboard(session) },
+    ]);
   });
   return link;
 }
