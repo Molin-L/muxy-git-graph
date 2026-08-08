@@ -30,6 +30,11 @@
 
 * { box-sizing: border-box; }
 
+/* The hidden attribute must always win. Class rules like `.banner { display:
+   flex }` outrank the UA's `[hidden] { display: none }` on specificity, leaving
+   "hidden" bars rendering their padding and borders as blank strips. */
+[hidden] { display: none !important; }
+
 html, body { margin: 0; height: 100%; overflow: hidden; }
 
 body {
@@ -60,6 +65,8 @@ body {
   font-weight: 600;
   white-space: nowrap;
 }
+
+.topbar__repo:empty { display: none; }
 
 .topbar__repo {
   font-size: var(--font-footnote);
@@ -137,7 +144,6 @@ select, input[type="text"] {
   flex: 0 0 auto;
 }
 
-.notice[hidden] { display: none; }
 .notice__text { flex: 1 1 auto; font-size: var(--font-footnote); color: var(--muxy-foreground-muted); }
 .notice--error { background: var(--muxy-accent-soft); }
 .notice--error .notice__text { color: var(--muxy-foreground); user-select: text; }
@@ -319,11 +325,6 @@ select, input[type="text"] {
 /* Stacked by default; two panes once the panel is wide enough. */
 .details__panes { flex: 1 1 auto; min-height: 0; overflow: auto; }
 .details__divider { display: none; }
-
-/* Must outrank `.details--split { display: flex }`, which otherwise defeats the
-   `hidden` attribute — the UA rule `[hidden] { display: none }` loses on
-   specificity to a class, leaving the pane stuck open. */
-.details[hidden] { display: none; }
 
 .details--split { display: flex; flex-direction: column; overflow: hidden; }
 .details--split .details__panes { display: flex; overflow: hidden; }
