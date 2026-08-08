@@ -592,8 +592,13 @@ export async function commitDetails(hash: string, known?: Commit): Promise<Commi
   }
   if (hash === UNCOMMITTED) return uncommittedDetails();
 
-  const meta = (await run(["git", "show", "--no-patch", `--format=${DETAIL_FORMAT}`, hash])).split(FLD);
-  const files = await changedFiles(hash);
+  // In parallel: on a remote workspace each command is an SSH round trip, and
+  // this call sits directly behind a click.
+  const [metaOut, files] = await Promise.all([
+    run(["git", "show", "--no-patch", `--format=${DETAIL_FORMAT}`, hash]),
+    changedFiles(hash),
+  ]);
+  const meta = metaOut.split(FLD);
   return {
     hash: meta[0] ?? hash,
     parents: (meta[1] ?? "").split(" ").filter(Boolean),

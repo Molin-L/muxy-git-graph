@@ -273,6 +273,37 @@ export class Panel {
   /** Invalidates in-flight detail renders when the selection moves on. */
   private detailsToken = 0;
 
+  private readonly detailsInflight = new Map<string, Promise<CommitDetails>>();
+  private prefetchTimer: number | undefined;
+
+  /** Cache hit, or join the in-flight fetch, or start one. */
+  private fetchDetails(commit: Commit): Promise<CommitDetails> {
+    if (commit.hash !== UNCOMMITTED) {
+      const cached = this.detailsCache.get(commit.hash);
+      if (cached !== undefined) return Promise.resolve(cached);
+    }
+    const existing = this.detailsInflight.get(commit.hash);
+    if (existing !== undefined) return existing;
+    const fetch = repo.commitDetails(commit.hash, commit)
+      .then((details) => {
+        this.cacheDetails(commit.hash, details);
+        return details;
+      })
+      .finally(() => {
+        this.detailsInflight.delete(commit.hash);
+      });
+    this.detailsInflight.set(commit.hash, fetch);
+    return fetch;
+  }
+
+  /** Fire-and-forget cache warmer; never competes with a click for bandwidth. */
+  private prefetchDetails(commit: Commit | undefined): void {
+    if (!commit || commit.hash === UNCOMMITTED) return;
+    if (this.detailsCache.has(commit.hash)) return;
+    if (this.detailsInflight.size >= 3) return;
+    void this.fetchDetails(commit).catch(() => undefined);
+  }
+
   private cacheDetails(key: string, details: CommitDetails): void {
     this.detailsCache.delete(key);
     this.detailsCache.set(key, details);
@@ -353,6 +384,17 @@ export class Panel {
       const commit = this.state.commits[index];
       openContextMenu(event.clientX, event.clientY,
         commitMenu(commit, canDropCommit(this.state.commits, index, this.state.head), this.actionContext()));
+    });
+
+    row.addEventListener("pointerenter", () => {
+      const index = Number(row.dataset.index);
+      if (Number.isNaN(index)) return;
+      window.clearTimeout(this.prefetchTimer);
+      // Debounced so sweeping the cursor down the list doesn't fetch every row.
+      this.prefetchTimer = window.setTimeout(
+        () => this.prefetchDetails(this.state.commits[index]),
+        80,
+      );
     });
 
     return row;
@@ -466,12 +508,15 @@ export class Panel {
         degradedNote ?? "Loading changes…");
     }
 
+    // The likely next clicks: up/down neighbours warm while this one renders.
+    this.prefetchDetails(this.state.commits[index + 1]);
+    this.prefetchDetails(this.state.commits[index - 1]);
+
     try {
-      const details = await repo.commitDetails(commit.hash, commit);
+      const details = await this.fetchDetails(commit);
       if (token !== this.detailsToken) return;
       const unchanged = cached !== undefined &&
         JSON.stringify(cached) === JSON.stringify(details);
-      this.cacheDetails(commit.hash, details);
       if (!unchanged) renderCommitDetails(this.detailsHost, details, handlers, null, degradedNote);
     } catch (err) {
       if (token !== this.detailsToken) return;
