@@ -17,6 +17,7 @@
   --radius-card: 8px;
 
   --row-height: 24px;
+  --fade-out: 28px;
   --mono: "SF Mono", Menlo, monospace;
 
   /* Lane palette, derived from the theme so it inverts with it. */
@@ -380,12 +381,18 @@ select, input[type="text"] {
    through matches does not open the Commit Details pane. */
 .row--find { box-shadow: inset 0 0 0 1px var(--muxy-accent); }
 
+/* A subject that outruns its column fades out instead of ending in an ellipsis:
+   the "…" reads as three characters of content, and at this size it costs more
+   room than it earns. The mask is anchored to the box, not the text, so a
+   subject that fits is left untouched — only one that reaches the right edge
+   dissolves there. */
 .row__subject {
   flex: 1 1 auto;
   min-width: 0;
   overflow: hidden;
-  text-overflow: ellipsis;
   white-space: nowrap;
+  -webkit-mask-image: linear-gradient(to right, #000 calc(100% - var(--fade-out)), transparent);
+  mask-image: linear-gradient(to right, #000 calc(100% - var(--fade-out)), transparent);
 }
 
 /* No width cap: the chip count is already bounded in JS, and any cap here clips
