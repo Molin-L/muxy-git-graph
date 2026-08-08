@@ -223,8 +223,13 @@ function sessionValue(session: string): string | HTMLElement {
   return link;
 }
 
-/** Successful avatar URL per email, or null after every source failed. */
-const avatarSources = new Map<string, string | null>();
+/**
+ * One avatar element per email, reused across renders. The details pane renders
+ * twice per click (skeleton, then full data); a fresh element each time would
+ * re-run the initials-then-image swap and blink even with the image cached.
+ * Moving the same node into the new tree keeps whatever it already shows.
+ */
+const avatarElements = new Map<string, HTMLElement>();
 
 /**
  * Where a real avatar image might live for this email, in order of preference:
@@ -249,10 +254,12 @@ function avatarCandidates(email: string): string[] {
 
 /**
  * Initials render immediately; a real avatar replaces them if any source loads.
- * The outcome is memoised per email so re-renders neither flicker nor re-probe
- * dead sources.
+ * Each email resolves exactly once for the session.
  */
 function avatar(name: string, email: string): HTMLElement {
+  const existing = avatarElements.get(email);
+  if (existing !== undefined) return existing;
+
   const words = name.trim().split(/\s+/).filter(Boolean);
   const initials = words.length === 0
     ? "?"
@@ -264,19 +271,13 @@ function avatar(name: string, email: string): HTMLElement {
   const badge = el("span", "details__avatar", initials);
   badge.style.background = `var(--lane-${hash % 6})`;
   badge.title = name;
+  avatarElements.set(email, badge);
 
-  const known = avatarSources.get(email);
-  if (known === null) return badge;
-  const candidates = known !== undefined ? [known] : avatarCandidates(email);
-
+  const candidates = avatarCandidates(email);
   const tryLoad = (index: number): void => {
-    if (index >= candidates.length) {
-      avatarSources.set(email, null);
-      return;
-    }
+    if (index >= candidates.length) return;
     const img = new Image();
     img.onload = () => {
-      avatarSources.set(email, candidates[index]);
       img.className = "details__avatarimg";
       img.alt = name;
       badge.textContent = "";
@@ -286,7 +287,7 @@ function avatar(name: string, email: string): HTMLElement {
     img.onerror = () => tryLoad(index + 1);
     img.src = candidates[index];
   };
-  if (candidates.length > 0) tryLoad(0);
+  tryLoad(0);
   return badge;
 }
 
