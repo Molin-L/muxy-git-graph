@@ -594,6 +594,24 @@ export class Panel {
     }
   }
 
+  /** Select a commit by hash — a parent link — and keep its row in view. */
+  private jumpToCommit(hash: string): void {
+    const index = this.state.commits.findIndex((c) => c.hash === hash);
+    if (index === -1) {
+      this.flashStatus(`${hash.slice(0, 8)} is not in the loaded range`);
+      return;
+    }
+    void this.select(index);
+    if (this.rows !== null) {
+      const top = this.rows.topOf(index);
+      const viewTop = this.scroller.scrollTop;
+      const viewBottom = viewTop + this.scroller.clientHeight - DETAILS_HEIGHT;
+      if (top < viewTop || top > viewBottom) {
+        this.scroller.scrollTop = Math.max(0, top - 3 * ROW_HEIGHT);
+      }
+    }
+  }
+
   private closeDetails(): void {
     this.detailsToken++;
     this.selected = null;
@@ -606,6 +624,7 @@ export class Panel {
   private detailsHandlers(hash: string, comparison: { from: string; to: string } | null) {
     return {
       close: () => this.closeDetails(),
+      openCommit: (target: string) => this.jumpToCommit(target),
       openDiff: (file: ChangedFile) => void this.openDiff(hash, file, comparison),
       resize: (fraction: number) => {
         this.splitFraction = fraction;

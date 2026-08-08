@@ -454,6 +454,8 @@ body.resizing { cursor: col-resize; user-select: none; }
   cursor: pointer;
 }
 .details__link:hover { text-decoration: underline; }
+
+.details__parent { font-family: var(--mono); }
 .details__meta dd { margin: 0; overflow: hidden; text-overflow: ellipsis; }
 
 .details__body {
@@ -501,7 +503,8 @@ body.resizing { cursor: col-resize; user-select: none; }
 
 .file {
   display: flex;
-  align-items: center;
+  /* Badge and counts ride the first line (the filename), not the row centre. */
+  align-items: flex-start;
   gap: var(--s3);
   /* The pane is a height-constrained flex column: without this, rows compress
      below their content height and the padding is squeezed out before paint —
@@ -560,6 +563,8 @@ body.resizing { cursor: col-resize; user-select: none; }
   font-family: var(--mono);
   font-size: var(--font-caption);
   white-space: nowrap;
+  /* Optically centred on the 16px filename line. */
+  line-height: 16px;
 }
 
 .file__add { color: var(--muxy-diff-add); }
@@ -572,6 +577,7 @@ body.resizing { cursor: col-resize; user-select: none; }
   font-family: var(--mono);
   font-size: var(--font-caption);
   font-weight: 600;
+  line-height: 16px;
 }
 
 .file__status--A, .file__status--\? { color: var(--muxy-diff-add); }

@@ -6,6 +6,8 @@ import { openContextMenu } from "./context-menu.ts";
 
 export interface DetailsHandlers {
   openDiff(file: ChangedFile): void;
+  /** Jump the details view to another commit, e.g. a parent. */
+  openCommit(hash: string): void;
   close(): void;
   /** Fired while the split divider is dragged, with a 0–1 fraction. */
   resize(fraction: number): void;
@@ -123,7 +125,18 @@ export function renderCommitDetails(
       addMeta(meta, "Session", sessionValue(session));
     }
     if (details.parents.length > 0) {
-      addMeta(meta, "Parents", details.parents.map((p) => p.slice(0, 8)).join(", "));
+      const parents = el("span", "details__parents");
+      details.parents.forEach((parent, index) => {
+        if (index > 0) parents.appendChild(document.createTextNode("  "));
+        const link = el("a", "details__link details__parent", parent.slice(0, 8));
+        link.title = parent;
+        link.addEventListener("click", (event) => {
+          event.preventDefault();
+          handlers.openCommit(parent);
+        });
+        parents.appendChild(link);
+      });
+      addMeta(meta, "Parents", parents);
     }
     summary.appendChild(meta);
 
