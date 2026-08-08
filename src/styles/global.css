@@ -43,6 +43,11 @@ body {
   font-family: -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
   font-size: var(--font-body);
   -webkit-font-smoothing: antialiased;
+  /* This is chrome, not a document: WebKit selects the word under the cursor on
+     right-click before contextmenu fires, so preventDefault cannot stop it.
+     Selection is re-enabled only where copying text is genuinely useful. */
+  -webkit-user-select: none;
+  user-select: none;
 }
 
 #root { display: flex; flex-direction: column; height: 100%; }
@@ -146,7 +151,7 @@ select, input[type="text"] {
 
 .notice__text { flex: 1 1 auto; font-size: var(--font-footnote); color: var(--muxy-foreground-muted); }
 .notice--error { background: var(--muxy-accent-soft); }
-.notice--error .notice__text { color: var(--muxy-foreground); user-select: text; }
+.notice--error .notice__text { color: var(--muxy-foreground); -webkit-user-select: text; user-select: text; }
 .notice button { height: 24px; font-size: var(--font-footnote); }
 
 /* ---------------------------------------------------------------- graph --- */
@@ -331,13 +336,17 @@ select, input[type="text"] {
 .details--split { display: flex; flex-direction: column; overflow: hidden; }
 .details--split .details__panes { display: flex; overflow: hidden; }
 
+.details__summary {
+  -webkit-user-select: text;
+  user-select: text;
+}
+
 .details--split .details__summary {
   flex: 0 0 var(--cdv-split, 50%);
   min-width: 0;
   overflow: auto;
   padding-right: var(--s4);
   border-right: 1px solid var(--muxy-border);
-  user-select: text;
 }
 
 .details--split .details__files {
@@ -502,6 +511,7 @@ body.resizing { cursor: col-resize; user-select: none; }
   overflow-wrap: anywhere;
   max-height: 320px;
   overflow: auto;
+  -webkit-user-select: text;
   user-select: text;
 }
 .dialog__row { display: flex; align-items: center; gap: var(--s4); margin-top: var(--s5); }

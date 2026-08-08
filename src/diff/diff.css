@@ -3,6 +3,16 @@
   overflow: auto;
   font-family: var(--mono);
   font-size: var(--font-footnote);
+  /* Diff text is the one thing in this tab people copy. */
+  -webkit-user-select: text;
+  user-select: text;
+}
+
+/* Line numbers pollute a copied selection; keep them out of it. */
+.diff__num,
+.diff__sign {
+  -webkit-user-select: none;
+  user-select: none;
 }
 
 .diff__empty {
