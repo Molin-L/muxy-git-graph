@@ -499,21 +499,28 @@ body.resizing { cursor: col-resize; user-select: none; }
 
 .file:hover { background: var(--muxy-hover); border-color: transparent; }
 
-/* Wraps rather than truncates when space runs out. */
-.file__name {
-  flex: 0 1 auto;
+/* Two lines per row: the name on top, its directory beneath. */
+.file__text {
+  flex: 1 1 auto;
   min-width: 0;
-  white-space: normal;
-  overflow-wrap: anywhere;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.file__name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .file__dir {
-  flex: 1 1 auto;
   min-width: 0;
   color: var(--muxy-foreground-muted);
   font-size: var(--font-footnote);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  /* rtl ellipsis keeps the deepest directories — the informative end — visible. */
   direction: rtl;
   text-align: left;
 }

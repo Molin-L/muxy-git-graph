@@ -187,8 +187,10 @@ function fileRow(file: ChangedFile, handlers: DetailsHandlers): HTMLElement {
   const name = segments.pop() ?? file.path;
   const dir = segments.join("/");
 
-  row.append(badge, el("span", "file__name", name));
-  if (dir !== "") row.appendChild(el("span", "file__dir", dir));
+  const text = el("span", "file__text");
+  text.appendChild(el("span", "file__name", name));
+  if (dir !== "") text.appendChild(el("span", "file__dir", dir));
+  row.append(badge, text);
   if (file.additions !== undefined || file.deletions !== undefined) {
     const stats = el("span", "file__stats");
     stats.append(
