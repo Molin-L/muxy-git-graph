@@ -128,9 +128,14 @@ export class Panel {
       void this.reload();
     });
 
+    // Find has a button as well as a shortcut: ⌘F is a chord the host may claim
+    // before a panel webview ever sees it, and a feature reachable only by a
+    // shortcut that silently does nothing is indistinguishable from a missing one.
+    const findButton = iconButton("Find (⌘F)", "⌕", () => this.toggleFind());
+
     const topbar = el("div", "topbar");
     topbar.append(this.branchLabel, this.statusLabel, el("span", "topbar__spacer"),
-      fetchButton, refreshButton);
+      findButton, fetchButton, refreshButton);
 
     this.banner.hidden = true;
     this.svg.setAttribute("class", "graph");
@@ -178,7 +183,10 @@ export class Panel {
     }, { passive: true });
 
     new ResizeObserver(() => this.applyColumns()).observe(this.root);
-    window.addEventListener("keydown", (event) => this.onKeyDown(event));
+    // Capture, not bubble: a chord like ⌘F is one the host and the webview both
+    // want, and only the capture phase runs before anything in the page can
+    // consume it. This is how Muxy's own editor claims the same key.
+    window.addEventListener("keydown", (event) => this.onKeyDown(event), true);
   }
 
   /**
@@ -673,6 +681,12 @@ export class Panel {
     this.find?.hide();
   }
 
+  /** The topbar button: the same key twice should not leave the bar stuck open. */
+  private toggleFind(): void {
+    if (this.find?.isOpen) this.closeFind();
+    else this.openFind();
+  }
+
   /**
    * Runs a query against the Commit Feed. Matching never touches the DOM: rows
    * are recycled as they scroll (ADR-0007), so the feed is the only place a
@@ -922,7 +936,26 @@ export class Panel {
   /* -------------------------------------------------------- keyboard --- */
 
   private onKeyDown(event: KeyboardEvent): void {
+    // A dialog is modal and registers its own capture handler; it owns the
+    // keyboard until it closes.
+    if (document.querySelector(".overlay") !== null) return;
+
     const meta = event.metaKey || event.ctrlKey;
+    /**
+     * `event.key` alone is not reliable for a chord here. With a non-Latin input
+     * method active WebKit can report the composed key (or `Process`) while the
+     * physical key is unchanged, so the shortcut silently stops working. Muxy's
+     * own `files` editor tests `event.code` for exactly this reason.
+     */
+    const is = (letter: string): boolean =>
+      event.key.toLowerCase() === letter || event.code === `Key${letter.toUpperCase()}`;
+
+    /** Ours to handle: stop it before the host can act on the same chord. */
+    const claim = (): void => {
+      event.preventDefault();
+      event.stopPropagation();
+    };
+
     if (event.key === "Escape") {
       closeContextMenu();
       // Find is the innermost surface: it closes before the details pane, so one
@@ -931,31 +964,31 @@ export class Panel {
       else if (this.selected !== null) this.closeDetails();
       return;
     }
-    if (meta && event.key.toLowerCase() === "f") {
-      event.preventDefault();
+    if (meta && is("f")) {
+      claim();
       this.openFind();
       return;
     }
-    if (meta && event.key.toLowerCase() === "g") {
-      event.preventDefault();
+    if (meta && is("g")) {
+      claim();
       this.navigateFind(event.shiftKey ? -1 : 1);
       return;
     }
-    if (meta && event.key.toLowerCase() === "r") {
-      event.preventDefault();
+    if (meta && is("r")) {
+      claim();
       repo.resetCapabilities();
       void this.reload();
       return;
     }
-    if (meta && event.key.toLowerCase() === "h") {
-      event.preventDefault();
+    if (meta && is("h")) {
+      claim();
       this.scrollToHead();
       return;
     }
     // Arrows belong to the text cursor while the find input has focus.
     if (this.find?.owns(event.target)) return;
     if (this.selected !== null && (event.key === "ArrowDown" || event.key === "ArrowUp")) {
-      event.preventDefault();
+      claim();
       const next = this.selected + (event.key === "ArrowDown" ? 1 : -1);
       if (next >= 0 && next < this.state.commits.length) void this.select(next);
     }
