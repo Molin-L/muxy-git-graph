@@ -11,7 +11,7 @@ import { confirmDialog } from "./dialog.ts";
 import { renderCommitDetails } from "./commit-details.ts";
 import { renderGraph } from "./render-graph.ts";
 import { VirtualRows } from "./virtual-rows.ts";
-import { absoluteTime, el, relativeTime } from "./dom.ts";
+import { absoluteTime, copyToClipboard, el, relativeTime } from "./dom.ts";
 
 const ROW_HEIGHT = 24;
 const DETAILS_HEIGHT = 280;
@@ -213,6 +213,17 @@ export class Panel {
     }
   }
 
+  private statusFlashTimer: number | undefined;
+
+  /** Transient confirmation in the topbar, e.g. after copying a ref name. */
+  private flashStatus(message: string): void {
+    window.clearTimeout(this.statusFlashTimer);
+    this.statusLabel.textContent = message;
+    this.statusFlashTimer = window.setTimeout(() => {
+      if (this.statusLabel.textContent === message) this.statusLabel.textContent = "";
+    }, 1500);
+  }
+
   private showNotice(message: string, isError = false): void {
     this.notice.hidden = false;
     this.notice.classList.toggle("notice--error", isError);
@@ -384,11 +395,11 @@ export class Panel {
 
   private refChip(ref: Ref, commit: Commit): HTMLElement {
     const chip = el("span", `ref ref--${ref.kind}`, ref.name);
-    chip.title = ref.name;
+    chip.title = `${ref.name} — click to copy, right-click for actions`;
     chip.addEventListener("click", (event) => {
       event.stopPropagation();
-      const rect = chip.getBoundingClientRect();
-      openContextMenu(rect.left, rect.bottom + 2, refMenu(ref, commit, this.actionContext()));
+      void copyToClipboard(ref.name);
+      this.flashStatus(`Copied ${ref.name}`);
     });
     chip.addEventListener("contextmenu", (event) => {
       event.preventDefault();

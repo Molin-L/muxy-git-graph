@@ -279,7 +279,9 @@ select, input[type="text"] {
   color: var(--muxy-accent);
 }
 
-.ref:hover { outline: 1px solid var(--muxy-accent); }
+/* Inset ring, not outline: the outline draws outside the chip and gets clipped
+   by the refs container's overflow, leaving only the corners visible. */
+.ref:hover { box-shadow: inset 0 0 0 1px var(--muxy-accent); }
 .ref--tag { background: var(--muxy-surface); color: var(--muxy-diff-add); }
 .ref--remote { background: var(--muxy-surface); color: var(--muxy-foreground-muted); }
 .ref--stash { background: var(--muxy-surface); color: var(--muxy-diff-hunk); }
