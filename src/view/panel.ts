@@ -73,7 +73,7 @@ export class Panel {
 
   async start(): Promise<void> {
     this.build();
-    await this.restoreSplit();
+    await Promise.all([this.restoreSplit(), this.restoreDetailsCache()]);
     await this.reload();
     this.subscribe();
   }
@@ -304,6 +304,8 @@ export class Panel {
     void this.fetchDetails(commit).catch(() => undefined);
   }
 
+  private persistTimer: number | undefined;
+
   private cacheDetails(key: string, details: CommitDetails): void {
     this.detailsCache.delete(key);
     this.detailsCache.set(key, details);
@@ -311,6 +313,36 @@ export class Panel {
       const oldest = this.detailsCache.keys().next().value;
       if (oldest !== undefined) this.detailsCache.delete(oldest);
     }
+    // Details are immutable, so persisting them is free correctness: the cache
+    // survives panel reloads and app restarts. Debounced; the uncommitted entry
+    // is skipped because the working tree does not survive anything.
+    window.clearTimeout(this.persistTimer);
+    this.persistTimer = window.setTimeout(() => void this.persistDetailsCache(), 2000);
+  }
+
+  private async persistDetailsCache(): Promise<void> {
+    try {
+      const entries = [...this.detailsCache.entries()].filter(([key]) => key !== UNCOMMITTED);
+      let payload = JSON.stringify(entries);
+      // Storage caps a value at 1 MB; stay far under it.
+      while (payload.length > 600_000 && entries.length > 0) {
+        entries.shift();
+        payload = JSON.stringify(entries);
+      }
+      await globalThis.muxy?.storage.set("details.cache", entries);
+    } catch { /* cache persistence must never break the panel */ }
+  }
+
+  private async restoreDetailsCache(): Promise<void> {
+    try {
+      const stored = await globalThis.muxy?.storage.get("details.cache");
+      if (!Array.isArray(stored)) return;
+      for (const entry of stored as Array<[string, CommitDetails]>) {
+        if (Array.isArray(entry) && typeof entry[0] === "string" && entry[0] !== UNCOMMITTED) {
+          this.detailsCache.set(entry[0], entry[1]);
+        }
+      }
+    } catch { /* first run */ }
   }
 
   /* ------------------------------------------------------------- render --- */
