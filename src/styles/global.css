@@ -488,8 +488,10 @@ body.resizing { cursor: col-resize; user-select: none; }
   gap: var(--s3);
   /* min-height, not height: the two-line rows size themselves. */
   min-height: var(--row-height);
-  /* Breathing room between rows without losing the compact list feel. */
-  padding: var(--s2) var(--s3);
+  /* Breathing room between rows without losing the compact list feel; the
+     footnote-sized path renders visually tighter than the name, so the bottom
+     edge gets two extra px to look even with the top. */
+  padding: var(--s2) var(--s3) var(--s3);
   background: none;
   border: none;
   border-radius: var(--radius-chip);
@@ -506,14 +508,14 @@ body.resizing { cursor: col-resize; user-select: none; }
   min-width: 0;
   display: flex;
   flex-direction: column;
-  gap: var(--s1);
+  /* Name and path are one unit — keep them tight. */
+  gap: 1px;
 }
 
 .file__name {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  line-height: 15px;
 }
 .file__dir {
   min-width: 0;
@@ -525,10 +527,6 @@ body.resizing { cursor: col-resize; user-select: none; }
   /* rtl ellipsis keeps the deepest directories — the informative end — visible. */
   direction: rtl;
   text-align: left;
-  /* Tight natural line-height glued the path to the row's bottom edge; matching
-     the name's rhythm gives it the same breathing room below as above. */
-  line-height: 15px;
-  padding-bottom: 1px;
 }
 
 /* Pinned to the right edge and never squeezed or wrapped — the directory
