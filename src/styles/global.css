@@ -498,12 +498,16 @@ body.resizing { cursor: col-resize; user-select: none; }
   display: flex;
   align-items: center;
   gap: var(--s3);
-  /* min-height, not height: the two-line rows size themselves. */
+  /* The pane is a height-constrained flex column: without this, rows compress
+     below their content height and the padding is squeezed out before paint —
+     the path ends up glued to the next row's name no matter what padding says. */
+  flex: 0 0 auto;
+  /* The global `button { height: 28px }` chrome rule was silently capping these
+     rows, squeezing the padding out of existence — two-line content overflowed
+     the box and the path sat on the next row's name. */
+  height: auto;
   min-height: var(--row-height);
-  /* Breathing room between rows without losing the compact list feel; the
-     footnote-sized path renders visually tighter than the name, so the bottom
-     edge gets two extra px to look even with the top. */
-  padding: var(--s2) var(--s3) var(--s3);
+  padding: var(--s2) var(--s3);
   background: none;
   border: none;
   border-radius: var(--radius-chip);
