@@ -32,6 +32,8 @@ export interface GitStatusFile {
   status: string;
   isStaged: boolean;
   isUnstaged: boolean;
+  additions?: number;
+  deletions?: number;
 }
 
 export interface GitStatus {

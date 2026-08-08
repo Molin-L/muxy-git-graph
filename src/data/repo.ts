@@ -45,6 +45,9 @@ export interface ChangedFile {
   readonly path: string;
   readonly oldPath?: string;
   readonly status: FileStatus;
+  /** Line counts from --numstat; absent for binary files and untracked files. */
+  readonly additions?: number;
+  readonly deletions?: number;
 }
 
 export interface CommitDetails {
@@ -647,6 +650,8 @@ async function uncommittedDetailsViaApi(): Promise<CommitDetails> {
       path: file.path,
       oldPath: file.oldPath,
       status: (letter === "?" ? "?" : letter) as FileStatus,
+      ...(file.additions !== undefined ? { additions: file.additions } : {}),
+      ...(file.deletions !== undefined ? { deletions: file.deletions } : {}),
     });
   }
   return {
@@ -656,7 +661,16 @@ async function uncommittedDetailsViaApi(): Promise<CommitDetails> {
 }
 
 async function uncommittedDetails(): Promise<CommitDetails> {
-  const out = (await tryRun(["git", "status", "--porcelain", "--untracked-files=all"])) ?? "";
+  const [out, numstatOut] = await Promise.all([
+    tryRun(["git", "status", "--porcelain", "--untracked-files=all"]).then((v) => v ?? ""),
+    // Worktree + index against HEAD; untracked files have no counts.
+    tryRun(["git", "diff", "HEAD", "--numstat"]),
+  ]);
+  const countsByPath = new Map<string, { additions: number; deletions: number }>();
+  for (const line of (numstatOut ?? "").split("\n")) {
+    const m = /^(\d+)\t(\d+)\t(.+)$/.exec(line);
+    if (m) countsByPath.set(m[3], { additions: Number(m[1]), deletions: Number(m[2]) });
+  }
   const files: ChangedFile[] = [];
   for (const line of out.split("\n")) {
     if (line.trim() === "") continue;
@@ -666,10 +680,10 @@ async function uncommittedDetails(): Promise<CommitDetails> {
       files.push({ path: rest, status: "?" });
     } else if (code.trimStart().startsWith("R")) {
       const [oldPath, path] = rest.split(" -> ");
-      files.push({ path, oldPath, status: "R" });
+      files.push({ path, oldPath, status: "R", ...countsByPath.get(path) });
     } else {
       const letter = (code.replace(/\s/g, "")[0] ?? "M") as FileStatus;
-      files.push({ path: rest, status: letter });
+      files.push({ path: rest, status: letter, ...countsByPath.get(rest) });
     }
   }
   return {
@@ -688,30 +702,47 @@ async function uncommittedDetails(): Promise<CommitDetails> {
 
 async function changedFiles(hash: string): Promise<ChangedFile[]> {
   const out = await run([
-    "git", "diff-tree", "--no-commit-id", "--name-status", "-r", "-M", "--root", hash,
+    "git", "diff-tree", "--no-commit-id", "-r", "-M", "--root", "--raw", "--numstat", hash,
   ]);
-  return parseNameStatus(out);
+  return parseRawNumstat(out);
 }
 
 export async function comparisonFiles(from: string, to: string): Promise<ChangedFile[]> {
   if (!(await probeExec())) throw degradedError("Comparing commits");
-  const out = await run(["git", "diff", "--name-status", "-M", from, to]);
-  return parseNameStatus(out);
+  const out = await run(["git", "diff", "-M", "--raw", "--numstat", from, to]);
+  return parseRawNumstat(out);
 }
 
-function parseNameStatus(out: string): ChangedFile[] {
+/**
+ * `--raw --numstat` emit in one invocation — one round trip — with the raw
+ * records first and the numstat lines after, in the same file order. Counts are
+ * therefore zipped by index, which sidesteps numstat's munged rename paths
+ * (`dir/{old => new}`); a length mismatch just drops the counts.
+ */
+function parseRawNumstat(out: string): ChangedFile[] {
   const files: ChangedFile[] = [];
+  const counts: Array<{ additions?: number; deletions?: number }> = [];
   for (const line of out.split("\n")) {
     if (line.trim() === "") continue;
-    const parts = line.split("\t");
-    const code = parts[0][0] as FileStatus;
-    if (code === "R" || code === "C") {
-      files.push({ status: code, oldPath: parts[1], path: parts[2] });
-    } else {
-      files.push({ status: code, path: parts[1] });
+    if (line.startsWith(":")) {
+      const [meta, ...paths] = line.split("\t");
+      const code = (meta.split(" ").pop() ?? "M")[0] as FileStatus;
+      if ((code === "R" || code === "C") && paths.length >= 2) {
+        files.push({ status: code, oldPath: paths[0], path: paths[1] });
+      } else {
+        files.push({ status: code, path: paths[0] ?? "" });
+      }
+      continue;
+    }
+    const numstat = /^(\d+|-)\t(\d+|-)\t/.exec(line);
+    if (numstat) {
+      counts.push(numstat[1] === "-"
+        ? {}
+        : { additions: Number(numstat[1]), deletions: Number(numstat[2]) });
     }
   }
-  return files;
+  if (counts.length !== files.length) return files;
+  return files.map((file, index) => ({ ...file, ...counts[index] }));
 }
 
 export async function fileDiff(hash: string, path: string, oldPath?: string): Promise<string> {

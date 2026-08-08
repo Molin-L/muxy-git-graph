@@ -129,6 +129,8 @@ test("commitDetails parses metadata, body and changed files", async () => {
   assert.equal(details.files[0].status, "R");
   assert.equal(details.files[0].path, "renamed.txt");
   assert.equal(details.files[0].oldPath, "c.txt");
+  assert.equal(details.files[0].additions, 0, "a pure rename adds no lines");
+  assert.equal(details.files[0].deletions, 0);
 });
 
 test("commitDetails on the initial commit works (--root)", async () => {
@@ -140,6 +142,8 @@ test("commitDetails on the initial commit works (--root)", async () => {
   assert.equal(details.files.length, 1);
   assert.equal(details.files[0].status, "A");
   assert.equal(details.files[0].path, "a.txt");
+  assert.equal(details.files[0].additions, 1, "numstat counts ride the same command");
+  assert.equal(details.files[0].deletions, 0);
 });
 
 test("uncommitted details list modified and untracked files", async () => {
@@ -148,7 +152,11 @@ test("uncommitted details list modified and untracked files", async () => {
   const paths = details.files.map((f) => f.path).sort();
   assert.deepEqual(paths, ["a.txt", "untracked.txt"]);
   assert.equal(details.files.find((f) => f.path === "untracked.txt")?.status, "?");
-  assert.equal(details.files.find((f) => f.path === "a.txt")?.status, "M");
+  const modified = details.files.find((f) => f.path === "a.txt");
+  assert.equal(modified?.status, "M");
+  assert.ok((modified?.additions ?? 0) >= 1, "worktree changes carry counts");
+  assert.equal(details.files.find((f) => f.path === "untracked.txt")?.additions, undefined,
+    "untracked files have no diff to count");
 });
 
 test("fileDiff returns a patch that the diff parser understands", async () => {
@@ -466,7 +474,12 @@ test("remote workspace: the ladder lands on the background relay and everything 
         stderr: "", exitCode: 0,
       };
     }
-    if (joined.startsWith("git diff-tree")) return { stdout: "M\tsrc/app.ts\n", stderr: "", exitCode: 0 };
+    if (joined.startsWith("git diff-tree")) {
+      return {
+        stdout: ":100644 100644 abc1234 def5678 M\tsrc/app.ts\n1\t2\tsrc/app.ts\n",
+        stderr: "", exitCode: 0,
+      };
+    }
     if (joined.startsWith("git show --format=")) return { stdout: "diff --git a/src/app.ts b/src/app.ts\n@@ -1 +1 @@\n-a\n+b\n", stderr: "", exitCode: 0 };
     if (joined.includes("MERGE_HEAD")) return { stdout: "", stderr: "", exitCode: 1 };
     return { stdout: "", stderr: "", exitCode: 0 };
@@ -499,8 +512,9 @@ test("remote workspace: the ladder lands on the background relay and everything 
     assert.ok(!repo.isDegraded(), "not degraded — full features");
     assert.equal(details.authorName, "Remote User");
     assert.equal(details.body, "full body");
-    assert.deepEqual(details.files, [{ status: "M", path: "src/app.ts" }],
-      "per-commit file lists work on the remote");
+    assert.deepEqual(details.files,
+      [{ status: "M", path: "src/app.ts", additions: 1, deletions: 2 }],
+      "per-commit file lists carry line counts on the remote");
 
     const patch = await repo.fileDiff("a".repeat(40), "src/app.ts");
     assert.match(patch, /^diff --git/, "per-commit diffs work on the remote");

@@ -189,6 +189,14 @@ function fileRow(file: ChangedFile, handlers: DetailsHandlers): HTMLElement {
 
   row.append(badge, el("span", "file__name", name));
   if (dir !== "") row.appendChild(el("span", "file__dir", dir));
+  if (file.additions !== undefined || file.deletions !== undefined) {
+    const stats = el("span", "file__stats");
+    stats.append(
+      el("span", "file__add", `+${file.additions ?? 0}`),
+      el("span", "file__del", `−${file.deletions ?? 0}`),
+    );
+    row.appendChild(stats);
+  }
 
   row.addEventListener("click", () => handlers.openDiff(file));
   row.addEventListener("contextmenu", (event) => {
