@@ -21,7 +21,9 @@ const POLL_MS = 4000;
 
 /** The Graph column never takes more than this share of the panel. */
 const MAX_GRAPH_FRACTION = 0.5;
-const MIN_GRAPH_WIDTH = 28;
+/** Wide enough for the "Graph" column header — a narrower single-lane repo
+ *  would otherwise ellipsize the label itself. */
+const MIN_GRAPH_WIDTH = 44;
 
 const CONFIG: GraphConfig = {
   grid: { x: 12, y: ROW_HEIGHT, offsetX: 12, offsetY: ROW_HEIGHT / 2, expandY: DETAILS_HEIGHT },
