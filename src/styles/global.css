@@ -602,11 +602,8 @@ body.resizing { cursor: col-resize; user-select: none; }
   /* Same horizontal rhythm as .file, so the columns line up beneath. */
   padding: var(--s2) var(--s3);
   /* Muxy's surface color can carry alpha, which let scrolled rows bleed through
-     the sticky header. Stack surface over the panel background — the same
-     layers the pane sits on — so the header is visually opaque in any theme. */
-  background:
-    linear-gradient(var(--muxy-surface), var(--muxy-surface)),
-    var(--muxy-background);
+     the sticky header. Pure black is fully opaque, so nothing shows through. */
+  background: #000;
   font-size: var(--font-footnote);
   text-transform: uppercase;
   letter-spacing: 0.04em;
