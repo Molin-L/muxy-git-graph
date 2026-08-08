@@ -1,6 +1,7 @@
 import { UNCOMMITTED } from "../data/repo.ts";
 import type { ChangedFile, CommitDetails, FileStatus } from "../data/repo.ts";
 import { absoluteTime, copyToClipboard, el, openExternal } from "./dom.ts";
+import { md5Hex } from "./md5.ts";
 import { openContextMenu } from "./context-menu.ts";
 
 export interface DetailsHandlers {
@@ -98,7 +99,7 @@ export function renderCommitDetails(
 
     // Author leads, avatar in the label column, name over date in the value.
     const avatarCell = el("dt", "details__avatarcell");
-    avatarCell.appendChild(avatar(details.authorName));
+    avatarCell.appendChild(avatar(details.authorName, details.authorEmail));
     const authorCell = el("dd", "details__author");
     authorCell.append(
       el("div", "details__authorname", identity(details.authorName, details.authorEmail)),
@@ -222,8 +223,36 @@ function sessionValue(session: string): string | HTMLElement {
   return link;
 }
 
-/** Initials avatar, coloured from the author's name — no network, no consent. */
-function avatar(name: string): HTMLElement {
+/** Successful avatar URL per email, or null after every source failed. */
+const avatarSources = new Map<string, string | null>();
+
+/**
+ * Where a real avatar image might live for this email, in order of preference:
+ * GitHub noreply addresses carry the user id or login outright; GitHub also
+ * resolves plain commit emails via its by-email endpoint; Gravatar (keyed by
+ * MD5) is the long tail. `d=404` makes an unset Gravatar fail over cleanly.
+ */
+function avatarCandidates(email: string): string[] {
+  const cleaned = email.trim().toLowerCase();
+  if (cleaned === "") return [];
+  const noreply = /^(?:(\d+)\+)?([a-z0-9-]+)@users\.noreply\.github\.com$/.exec(cleaned);
+  if (noreply) {
+    return [noreply[1] !== undefined
+      ? `https://avatars.githubusercontent.com/u/${noreply[1]}?s=64`
+      : `https://github.com/${noreply[2]}.png?size=64`];
+  }
+  return [
+    `https://avatars.githubusercontent.com/u/e?email=${encodeURIComponent(cleaned)}&s=64`,
+    `https://gravatar.com/avatar/${md5Hex(cleaned)}?s=64&d=404`,
+  ];
+}
+
+/**
+ * Initials render immediately; a real avatar replaces them if any source loads.
+ * The outcome is memoised per email so re-renders neither flicker nor re-probe
+ * dead sources.
+ */
+function avatar(name: string, email: string): HTMLElement {
   const words = name.trim().split(/\s+/).filter(Boolean);
   const initials = words.length === 0
     ? "?"
@@ -235,6 +264,29 @@ function avatar(name: string): HTMLElement {
   const badge = el("span", "details__avatar", initials);
   badge.style.background = `var(--lane-${hash % 6})`;
   badge.title = name;
+
+  const known = avatarSources.get(email);
+  if (known === null) return badge;
+  const candidates = known !== undefined ? [known] : avatarCandidates(email);
+
+  const tryLoad = (index: number): void => {
+    if (index >= candidates.length) {
+      avatarSources.set(email, null);
+      return;
+    }
+    const img = new Image();
+    img.onload = () => {
+      avatarSources.set(email, candidates[index]);
+      img.className = "details__avatarimg";
+      img.alt = name;
+      badge.textContent = "";
+      badge.style.background = "transparent";
+      badge.appendChild(img);
+    };
+    img.onerror = () => tryLoad(index + 1);
+    img.src = candidates[index];
+  };
+  if (candidates.length > 0) tryLoad(0);
   return badge;
 }
 

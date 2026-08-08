@@ -421,7 +421,7 @@ body.resizing { cursor: col-resize; user-select: none; }
 .details__meta dt,
 .details__meta dd { line-height: 18px; }
 
-.details__avatarcell { display: flex; justify-content: center; }
+.details__avatarcell { display: flex; justify-content: flex-start; }
 
 .details__avatar {
   width: 26px;
@@ -433,6 +433,14 @@ body.resizing { cursor: col-resize; user-select: none; }
   font-size: var(--font-caption);
   font-weight: 700;
   color: var(--muxy-background);
+}
+
+.details__avatarimg {
+  width: 100%;
+  height: 100%;
+  border-radius: 50%;
+  object-fit: cover;
+  display: block;
 }
 
 .details__authorname { font-weight: 600; }
