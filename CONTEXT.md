@@ -50,7 +50,7 @@ refs and changed files. It lists files; it does not render diffs.
 _Avoid_: inspector, sidebar, preview
 
 **Find Field**:
-The permanent search control in the topbar, sharing the row with Fetch and Refresh.
+The permanent search control in the topbar, sharing the row with Refresh.
 It does not open or close — `⌘F` only moves focus to it — and it searches the Commit
 Feed itself rather than the rendered rows
 (see [ADR-0018](./docs/adr/0018-find-matches-the-feed-not-the-dom.md)).

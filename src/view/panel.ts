@@ -136,14 +136,8 @@ export class Panel {
   /* ------------------------------------------------------------- chrome --- */
 
   private build(): void {
-    const fetchButton = iconButton("Fetch from remotes", "↓", () =>
-      this.perform("Fetch", () => write.fetch(true)));
-    const refreshButton = iconButton("Refresh (⌘R)", "⟳", () => {
-      // A manual refresh must also re-test the transport: the workspace may have
-      // become remote-capable (or lost it) without any project-switch event.
-      repo.resetCapabilities();
-      void this.reload();
-    });
+    const refreshButton = iconButton("Fetch from remotes and refresh (⌘R)", "⟳",
+      () => void this.refresh());
 
     const topbar = el("div", "topbar");
 
@@ -175,7 +169,7 @@ export class Panel {
     // The find field takes the spacer's role, so it absorbs whatever width the
     // labels and buttons do not need.
     topbar.append(this.branchLabel, this.statusLabel, this.find.element,
-      fetchButton, refreshButton);
+      refreshButton);
 
     this.notice.hidden = true;
     this.root.append(topbar, this.banner, this.notice, this.scroller);
@@ -912,6 +906,18 @@ export class Panel {
     };
   }
 
+  /**
+   * The one manual freshness gesture: fetch every remote, then reload. A manual
+   * refresh also re-tests the transport, since the workspace may have become
+   * remote-capable (or lost it) without any project-switch event. perform()
+   * reloads even when the fetch fails, so an offline remote still repaints the
+   * graph from what is already on disk.
+   */
+  private async refresh(): Promise<void> {
+    repo.resetCapabilities();
+    await this.perform("Fetch", () => write.fetch(true));
+  }
+
   private async perform(label: string, operation: () => Promise<unknown>): Promise<void> {
     this.statusLabel.textContent = `${label}…`;
     try {
@@ -1046,8 +1052,7 @@ export class Panel {
     }
     if (meta && is("r")) {
       claim();
-      repo.resetCapabilities();
-      void this.reload();
+      void this.refresh();
       return;
     }
     if (meta && is("h")) {

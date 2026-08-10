@@ -17,8 +17,8 @@ const DEBOUNCE_MS = 180;
 const INPUT_TITLE = "Find commits — ⏎ next match, ⇧⏎ previous";
 
 /**
- * The find bar. Always present, and it lives in the topbar alongside Fetch and
- * Refresh rather than taking a row of its own.
+ * The find bar. Always present, and it lives in the topbar alongside Refresh
+ * rather than taking a row of its own.
  *
  * It does not open or close. ⌘F is a chord a panel webview competes with the
  * host for, and a find that only exists once that chord lands is a find that
