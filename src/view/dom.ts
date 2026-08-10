@@ -13,34 +13,48 @@ export function clear(node: Element): void {
   node.replaceChildren();
 }
 
-export function relativeTime(iso: string): string {
-  const then = new Date(iso).getTime();
-  if (Number.isNaN(then)) return "";
-  const seconds = Math.max(0, Math.floor((Date.now() - then) / 1000));
-  if (seconds < 60) return "just now";
-  const minutes = Math.floor(seconds / 60);
-  if (minutes < 60) return `${minutes}m ago`;
-  const hours = Math.floor(minutes / 60);
-  if (hours < 24) return `${hours}h ago`;
-  const days = Math.floor(hours / 24);
-  if (days < 7) return `${days}d ago`;
-  const weeks = Math.floor(days / 7);
-  if (weeks < 5) return `${weeks}w ago`;
-  const months = Math.floor(days / 30);
-  if (months < 12) return `${months}mo ago`;
-  return `${Math.floor(days / 365)}y ago`;
+/* Date and clock are formatted separately and joined by hand. A single
+   toLocaleString over the same fields glues them with a connector — "Aug 9,
+   2026 at 14:23" in current ICU — which is words, not information, in a column
+   this narrow. Both halves stay locale-aware; only the join is ours. */
+const DAY = new Intl.DateTimeFormat(undefined, {
+  year: "numeric",
+  month: "short",
+  day: "numeric",
+});
+
+const CLOCK = new Intl.DateTimeFormat(undefined, {
+  hour: "2-digit",
+  minute: "2-digit",
+  hourCycle: "h23",
+});
+
+function format(date: Date): string {
+  return `${DAY.format(date)} ${CLOCK.format(date)}`;
 }
 
 export function absoluteTime(iso: string): string {
   const date = new Date(iso);
   if (Number.isNaN(date.getTime())) return "";
-  return date.toLocaleString(undefined, {
-    year: "numeric",
-    month: "short",
-    day: "numeric",
-    hour: "2-digit",
-    minute: "2-digit",
-  });
+  return format(date);
+}
+
+/**
+ * Every width `absoluteTime` can produce in the given years: twelve month
+ * names, both two-digit day shapes, and a two-digit hour. Sizing a column off
+ * these is exact and costs a few dozen formats, where formatting each of
+ * thousands of commits would cost thousands for the same answer.
+ */
+export function absoluteTimeWidths(years: Iterable<number>): string[] {
+  const samples: string[] = [];
+  for (const year of years) {
+    for (let month = 0; month < 12; month++) {
+      for (const day of [28, 30]) {
+        samples.push(format(new Date(year, month, day, 22, 38)));
+      }
+    }
+  }
+  return samples;
 }
 
 export async function copyToClipboard(value: string): Promise<void> {

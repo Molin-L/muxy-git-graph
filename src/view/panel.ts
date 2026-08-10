@@ -14,7 +14,8 @@ import { VirtualRows } from "./virtual-rows.ts";
 import { FindWidget } from "./find-widget.ts";
 import { compile, search, segment } from "./find.ts";
 import type { FindOptions } from "./find.ts";
-import { absoluteTime, copyToClipboard, el, relativeTime } from "./dom.ts";
+import { absoluteTime, absoluteTimeWidths, copyToClipboard, el } from "./dom.ts";
+import { ColumnRuler } from "./measure.ts";
 
 const ROW_HEIGHT = 24;
 const DETAILS_HEIGHT = 280;
@@ -28,13 +29,24 @@ const MAX_GRAPH_FRACTION = 0.5;
  *  would otherwise ellipsize the label itself. */
 const MIN_GRAPH_WIDTH = 44;
 
+/** Four 6px grid gaps plus the row's own right padding. */
+const ROW_CHROME = 34;
+/** Description keeps at least this much; a fixed column that would eat into it
+ *  is dropped instead. */
+const MIN_DESC_WIDTH = 200;
+/** One pathological author ("Continuous Integration Service Account") must not
+ *  cost every row its Description. Past this the name ellipsizes and the
+ *  tooltip carries it. */
+const MAX_AUTHOR_WIDTH = 160;
+
 const CONFIG: GraphConfig = {
   grid: { x: 12, y: ROW_HEIGHT, offsetX: 12, offsetY: ROW_HEIGHT / 2, expandY: DETAILS_HEIGHT },
   style: "rounded",
   uncommittedChanges: "openCircleAtUncommitted",
 };
 
-type Columns = { date: boolean; author: boolean; hash: boolean };
+/** Pixel width of each fixed column; 0 means the panel is too narrow for it. */
+type Columns = { date: number; author: number; hash: number };
 
 /** Which refs win the visible chip slots when a commit carries several. */
 const REF_ORDER: Record<Ref["kind"], number> = { head: 0, tag: 1, remote: 2, stash: 3 };
@@ -58,7 +70,12 @@ export class Panel {
   private layout: GraphLayout | null = null;
   private rows: VirtualRows | null = null;
   private find: FindWidget | null = null;
-  private columns: Columns = { date: true, author: true, hash: true };
+  private ruler: ColumnRuler | null = null;
+  private columns: Columns = { date: 0, author: 0, hash: 0 };
+  /** What each fixed column needs to hold its widest value on one line. */
+  private needed: Columns = { date: 0, author: 0, hash: 0 };
+  /** The commit array `needed` was measured from, so it is measured once. */
+  private measuredFor: readonly Commit[] | null = null;
 
   private selected: number | null = null;
   private compareWith: number | null = null;
@@ -163,6 +180,12 @@ export class Panel {
     this.notice.hidden = true;
     this.root.append(topbar, this.banner, this.notice, this.scroller);
 
+    // After the append: the ruler reads computed styles, which need the panel
+    // to be in the document. Measured straight away so the header is laid out
+    // to its own labels while the first history is still loading.
+    this.ruler = new ColumnRuler(this.root);
+    this.measureColumns();
+
     this.rows = new VirtualRows({
       scroller: this.scroller,
       container: this.rowsHost,
@@ -187,18 +210,67 @@ export class Panel {
   }
 
   /**
-   * Sizes the five columns. Hidden columns collapse to 0px rather than being
-   * removed, so the header and every recycled row keep the same track count.
+   * Measures what Date, Author and Commit need to hold their widest value on
+   * one line. Runs once per loaded history rather than per resize: dragging the
+   * panel changes how much room there is, never how wide the text is.
+   */
+  private measureColumns(): void {
+    if (this.ruler === null || this.measuredFor === this.state.commits) return;
+    this.measuredFor = this.state.commits;
+
+    // The header labels are part of the content — a column narrower than its
+    // own title would ellipsize that instead.
+    const years = new Set<number>();
+    const authors = new Set<string>(["Author"]);
+    for (const commit of this.state.commits) {
+      if (commit.hash === UNCOMMITTED) continue;
+      const year = new Date(commit.authorDate).getFullYear();
+      if (!Number.isNaN(year)) years.add(year);
+      authors.add(commit.authorName);
+    }
+    if (years.size === 0) years.add(new Date().getFullYear());
+
+    this.needed = {
+      date: this.ruler.widthOf("cell--date", ["Date", ...absoluteTimeWidths(years)]),
+      author: this.ruler.widthOf("cell--author", authors),
+      // Abbreviated hashes are seven monospaced hex digits, always.
+      hash: this.ruler.widthOf("cell--hash", ["Commit", "0000000"]),
+    };
+  }
+
+  /**
+   * Gives Date, Author and Commit exactly the width their text needs, and every
+   * remaining pixel to Description. A column that would leave Description below
+   * its minimum collapses to 0px instead of being removed, so the header and
+   * every recycled row keep the same track count.
    */
   private applyColumns(): void {
     const width = this.root.clientWidth;
-    this.columns = { date: width >= 620, author: width >= 480, hash: width >= 360 };
+    const before = this.columns;
 
     const contentWidth = this.layout?.width ?? MIN_GRAPH_WIDTH;
     const graph = Math.max(
       MIN_GRAPH_WIDTH,
       Math.min(contentWidth, Math.floor(width * MAX_GRAPH_FRACTION)),
     );
+
+    // Claimed in reverse order of how long each is worth keeping: a hash stays
+    // longest, a full timestamp is the first thing to go. Once one column is
+    // refused the rest are too, so narrowing the panel drops Date, then Author,
+    // then Commit — never Author while Date is still standing.
+    let spare = width - graph - ROW_CHROME - MIN_DESC_WIDTH;
+    const take = (want: number): number => {
+      if (want > spare) {
+        spare = -1;
+        return 0;
+      }
+      spare -= want;
+      return want;
+    };
+    const hash = take(this.needed.hash);
+    const author = take(Math.min(this.needed.author, MAX_AUTHOR_WIDTH));
+    const date = take(this.needed.date);
+    this.columns = { date, author, hash };
 
     // Summary and files sit side by side only when there is room for both.
     this.detailsHost.classList.toggle("details--split", width >= 520);
@@ -209,9 +281,15 @@ export class Panel {
 
     const style = this.root.style;
     style.setProperty("--col-graph", `${graph}px`);
-    style.setProperty("--col-date", this.columns.date ? "84px" : "0px");
-    style.setProperty("--col-author", this.columns.author ? "116px" : "0px");
-    style.setProperty("--col-hash", this.columns.hash ? "60px" : "0px");
+    style.setProperty("--col-date", `${date}px`);
+    style.setProperty("--col-author", `${author}px`);
+    style.setProperty("--col-hash", `${hash}px`);
+
+    // Mounted rows keep whatever chips they were last given, and how many fit
+    // depends on which columns survived. Nothing repaints them but this.
+    if ((before.date > 0) !== (date > 0) || (before.author > 0) !== (author > 0)) {
+      this.rows?.refresh();
+    }
   }
 
   /* --------------------------------------------------------------- data --- */
@@ -406,6 +484,7 @@ export class Panel {
       expandAt: expandAt ?? -1,
     });
     renderGraph(this.svg, this.layout);
+    this.measureColumns();
     this.applyColumns();
 
     this.rows?.setCount(
@@ -496,9 +575,10 @@ export class Panel {
     refs.replaceChildren(...this.refChips(commit));
     this.paint(subject, commit.subject);
     subject.title = commit.subject;
-    date.textContent = commit.hash === UNCOMMITTED ? "" : relativeTime(commit.authorDate);
-    date.title = absoluteTime(commit.authorDate);
+    date.textContent = commit.hash === UNCOMMITTED ? "" : absoluteTime(commit.authorDate);
     this.paint(author, commit.authorName);
+    // The column fits every name but the outliers; those get a tooltip.
+    author.title = this.needed.author > MAX_AUTHOR_WIDTH ? commit.authorName : "";
     this.paint(hash, commit.hash === UNCOMMITTED ? "" : commit.hash.slice(0, 7));
   }
 
@@ -510,7 +590,7 @@ export class Panel {
     if (commit.refs.length === 0) return [];
 
     const ordered = [...commit.refs].sort((a, b) => REF_ORDER[a.kind] - REF_ORDER[b.kind]);
-    const limit = this.columns.date ? 3 : this.columns.author ? 2 : 1;
+    const limit = this.columns.date > 0 ? 3 : this.columns.author > 0 ? 2 : 1;
     if (ordered.length <= limit + 1) return ordered.map((ref) => this.refChip(ref, commit));
 
     const visible = ordered.slice(0, limit);
