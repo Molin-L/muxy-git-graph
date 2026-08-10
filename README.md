@@ -71,7 +71,7 @@ npm run typecheck
 
 ## Design decisions
 
-Eighteen ADRs in [`docs/adr/`](./docs/adr/). The ones that will surprise you:
+Nineteen ADRs in [`docs/adr/`](./docs/adr/). The ones that will surprise you:
 
 - **[0002](./docs/adr/0002-data-layer-split.md)** — reads go through `muxy.exec`,
   writes through `muxy.git`. Split by intent, not capability.
@@ -85,6 +85,8 @@ Eighteen ADRs in [`docs/adr/`](./docs/adr/). The ones that will surprise you:
   tab decision in ADR-0003.
 - **[0018](./docs/adr/0018-find-matches-the-feed-not-the-dom.md)** — find searches
   the commit data, never the DOM, and highlights as rows render.
+- **[0019](./docs/adr/0019-warm-graph-per-project.md)** — switching projects paints
+  a cached graph and revalidates behind it. A whole repaint is one command.
 
 ## Remote (SSH) workspaces
 

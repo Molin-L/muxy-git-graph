@@ -25,6 +25,29 @@ const INITIAL_LOAD = 300;
 const LOAD_MORE = 300;
 const POLL_MS = 4000;
 
+/** How many projects keep a warm graph. Enough for a day's rotation. */
+const MAX_CACHED_PROJECTS = 8;
+/** Commits carried across an app restart, per project. The in-memory cache
+ *  keeps whatever was loaded; only the persisted copy is trimmed. */
+const PERSIST_COMMITS = 150;
+/** Storage caps a value at 1 MB. Its own key, so it does not compete with
+ *  `details.cache` for that budget. */
+const PERSIST_BUDGET = 400_000;
+
+/**
+ * Everything needed to repaint a project's graph without touching git, plus the
+ * digest that says whether it is still true. See ADR-0019.
+ */
+interface ProjectCache {
+  readonly digest: string;
+  readonly state: RepoState;
+  readonly remotes: readonly string[];
+  readonly pending: PendingOperation;
+  readonly loaded: number;
+  readonly selectedHash: string | null;
+  readonly scrollTop: number;
+}
+
 /** The Graph column never takes more than this share of the panel. */
 const MAX_GRAPH_FRACTION = 0.5;
 /** Wide enough for the "Graph" column header — a narrower single-lane repo
@@ -45,6 +68,17 @@ const CONFIG: GraphConfig = {
   grid: { x: 12, y: ROW_HEIGHT, offsetX: 12, offsetY: ROW_HEIGHT / 2, expandY: DETAILS_HEIGHT },
   style: "rounded",
   uncommittedChanges: "openCircleAtUncommitted",
+};
+
+/** What a project with nothing cached adopts: an empty panel, not the last one. */
+const EMPTY_CACHE: ProjectCache = {
+  digest: "",
+  state: { commits: [], head: null, headBranch: "", moreAvailable: false },
+  remotes: [],
+  pending: null,
+  loaded: INITIAL_LOAD,
+  selectedHash: null,
+  scrollTop: 0,
 };
 
 /** Pixel width of each fixed column; 0 means the panel is too narrow for it. */
@@ -92,13 +126,22 @@ export class Panel {
   private findError: string | null = null;
 
   private loaded = INITIAL_LOAD;
-  private remotes: string[] = [];
+  private remotes: readonly string[] = [];
   private pending: PendingOperation = null;
   private digest = "";
   private pollTimer: number | undefined;
   private busy = false;
   private splitFraction = 0.5;
   private lastReloadMs = 0;
+
+  /**
+   * A warm graph per project. Switching projects is the common gesture in a
+   * day's work, and re-reading a repository from scratch each time is seconds of
+   * latency for an answer that usually has not changed. See ADR-0019.
+   */
+  private readonly projects = new Map<string, ProjectCache>();
+  /** Which project `state` describes; null until the first resolve. */
+  private projectKey: string | null = null;
 
   constructor(root: HTMLElement) {
     this.root = root;
@@ -108,10 +151,119 @@ export class Panel {
     // Restores run first so the find bar is built with the user's last toggles
     // rather than being retrofitted with them a frame later.
     await Promise.all([this.restoreSplit(), this.restoreDetailsCache(), this.restoreFindOptions(),
-      this.restoreFileView()]);
+      this.restoreFileView(), this.restoreProjects()]);
     this.build();
-    await this.reload();
+    await this.openProject();
     this.subscribe();
+  }
+
+  /**
+   * Binds the panel to whatever project is active. A project seen before paints
+   * from cache and is checked against the repository afterwards; one that has
+   * not is read the slow way, which is the only time the user waits.
+   */
+  private async openProject(): Promise<void> {
+    const key = await repo.workspaceKey().catch(() => null);
+    if (key !== null && key === this.projectKey) {
+      await this.reload();
+      return;
+    }
+
+    this.remember();
+    repo.rebindWorkspace();
+    this.projectKey = key;
+
+    const cached = key === null ? undefined : this.projects.get(key);
+    if (cached === undefined) {
+      // Nothing to show for this project yet — and what is on screen belongs to
+      // the previous one, so clear it rather than leave the wrong repository up.
+      this.adopt(EMPTY_CACHE);
+      await this.reload();
+      return;
+    }
+    this.adopt(cached);
+    await this.revalidate(cached.digest);
+  }
+
+  /**
+   * The cached graph is a claim about the repository, and `refDigest` is one
+   * round trip that settles it — the same signal the poll already trusts
+   * (ADR-0008). Matching means the paint that already happened was the whole of
+   * the work; differing costs exactly what a cold load would have.
+   */
+  private async revalidate(expected: string): Promise<void> {
+    const key = this.projectKey;
+    this.statusLabel.textContent = "checking…";
+    try {
+      const digest = await repo.refDigest();
+      if (key !== this.projectKey) return;
+      if (digest === expected) {
+        this.statusLabel.textContent = "";
+        this.updatePolling();
+        return;
+      }
+    } catch {
+      if (key !== this.projectKey) return;
+    }
+    await this.reload();
+  }
+
+  /** Parks the active project's graph so returning to it is instant. */
+  private remember(): void {
+    if (this.projectKey === null || this.state.commits.length === 0) return;
+    const entry: ProjectCache = {
+      digest: this.digest,
+      state: this.state,
+      remotes: this.remotes,
+      pending: this.pending,
+      loaded: this.loaded,
+      selectedHash: this.selectedHash,
+      scrollTop: this.scroller.scrollTop,
+    };
+    // Delete first: insertion order is the eviction order.
+    this.projects.delete(this.projectKey);
+    this.projects.set(this.projectKey, entry);
+    while (this.projects.size > MAX_CACHED_PROJECTS) {
+      const oldest = this.projects.keys().next().value;
+      if (oldest === undefined) break;
+      this.projects.delete(oldest);
+    }
+    this.schedulePersistProjects();
+  }
+
+  /** Repaints the whole panel from a cached graph, touching no git at all. */
+  private adopt(cache: ProjectCache): void {
+    this.state = cache.state;
+    this.remotes = cache.remotes;
+    this.pending = cache.pending;
+    this.digest = cache.digest;
+    this.loaded = cache.loaded;
+
+    // The details pane still holds the previous project's commit.
+    this.detailsToken++;
+    this.selected = null;
+    this.compareWith = null;
+    this.selectedHash = null;
+    this.detailsHost.hidden = true;
+    this.detailsHost.replaceChildren();
+    // Author and date widths are a property of this repository's commits.
+    this.measuredFor = null;
+
+    this.statusLabel.textContent = "";
+    this.statusLabel.title = "";
+    this.recomputeFind();
+    this.render();
+    this.renderBanner();
+    if (this.state.commits.length === 0) this.showNotice("Loading history…");
+    else this.hideNotice();
+    // After render: the scroller cannot reach a position the content is not
+    // tall enough for yet.
+    this.scroller.scrollTop = cache.scrollTop;
+
+    const at = cache.selectedHash === null
+      ? -1
+      : this.state.commits.findIndex((c) => c.hash === cache.selectedHash);
+    if (at !== -1) void this.select(at);
   }
 
   private async restoreSplit(): Promise<void> {
@@ -122,6 +274,61 @@ export class Panel {
       }
     } catch { /* first run */ }
     this.detailsHost.style.setProperty("--cdv-split", `${(this.splitFraction * 100).toFixed(2)}%`);
+  }
+
+  private persistProjectsTimer: number | undefined;
+
+  private schedulePersistProjects(): void {
+    window.clearTimeout(this.persistProjectsTimer);
+    this.persistProjectsTimer = window.setTimeout(() => void this.persistProjects(), 2000);
+  }
+
+  /**
+   * Persisting is what makes the *first* switch of the day fast too. Only a
+   * prefix of each history is written: a cache is a head start, not a mirror,
+   * and the rest is one `git log` away.
+   */
+  private async persistProjects(): Promise<void> {
+    try {
+      const entries = [...this.projects.entries()].map(([root, cache]) => {
+        const truncated = cache.state.commits.length > PERSIST_COMMITS;
+        if (!truncated) return [root, cache] as const;
+        return [root, {
+          ...cache,
+          state: {
+            ...cache.state,
+            commits: cache.state.commits.slice(0, PERSIST_COMMITS),
+            moreAvailable: true,
+          },
+          loaded: PERSIST_COMMITS,
+          // The dropped tail is where the selection and the scroll offset may
+          // have been; both would restore to the wrong commit.
+          selectedHash: null,
+          scrollTop: 0,
+        }] as const;
+      });
+      let payload = JSON.stringify(entries);
+      while (payload.length > PERSIST_BUDGET && entries.length > 0) {
+        entries.shift();
+        payload = JSON.stringify(entries);
+      }
+      await globalThis.muxy?.storage.set("graph.cache", entries);
+    } catch { /* cache persistence must never break the panel */ }
+  }
+
+  private async restoreProjects(): Promise<void> {
+    try {
+      const stored = await globalThis.muxy?.storage.get("graph.cache");
+      if (!Array.isArray(stored)) return;
+      for (const entry of stored as Array<[string, ProjectCache]>) {
+        if (!Array.isArray(entry) || typeof entry[0] !== "string") continue;
+        const cache = entry[1];
+        if (cache === null || typeof cache !== "object" || !Array.isArray(cache.state?.commits)) {
+          continue;
+        }
+        this.projects.set(entry[0], cache);
+      }
+    } catch { /* first run */ }
   }
 
   private async restoreFileView(): Promise<void> {
@@ -302,23 +509,23 @@ export class Panel {
     this.busy = true;
     if (this.state.commits.length === 0) this.showNotice("Loading history…");
     const started = Date.now();
+    // A project switch that lands while this is in flight owns the view; this
+    // answer is about a repository the user has already left.
+    const key = this.projectKey;
     try {
-      const [state, remotes, pending, digest] = await Promise.all([
-        repo.loadCommits(this.loaded),
-        repo.remotes(),
-        repo.pendingOperation(),
-        repo.refDigest(),
-      ]);
+      const { state, remotes, pending, digest } = await repo.loadSnapshot(this.loaded);
+      if (key !== this.projectKey) return;
       this.state = state;
       this.remotes = remotes;
       this.pending = pending;
       this.digest = digest;
       this.statusLabel.textContent = "";
-      this.detailsCache.delete(UNCOMMITTED);
+      this.forgetDetails(UNCOMMITTED);
       this.reselect();
       this.recomputeFind();
       this.render();
       this.renderBanner();
+      this.remember();
 
       if (state.commits.length === 0) {
         this.showNotice(state.head === null
@@ -340,7 +547,9 @@ export class Panel {
     } catch (err) {
       // A remote workspace makes every read a round trip, so surface the actual
       // failing command rather than leaving a blank panel.
-      this.showNotice(err instanceof Error ? err.message : String(err), true);
+      if (key === this.projectKey) {
+        this.showNotice(err instanceof Error ? err.message : String(err), true);
+      }
     } finally {
       this.busy = false;
       this.lastReloadMs = Date.now() - started;
@@ -381,12 +590,12 @@ export class Panel {
 
   /** Keep the selection pinned to the same commit hash across a refresh. */
   private reselect(): void {
-    if (this.selected === null) return;
-    const previous = this.selectedHash;
-    const index = this.state.commits.findIndex((c) => c.hash === previous);
+    if (this.selectedHash === null) return;
+    const index = this.state.commits.findIndex((c) => c.hash === this.selectedHash);
     this.selected = index === -1 ? null : index;
     if (this.selected === null) {
       this.compareWith = null;
+      this.selectedHash = null;
       this.detailsHost.hidden = true;
     }
   }
@@ -402,6 +611,24 @@ export class Panel {
    */
   private readonly detailsCache = new Map<string, CommitDetails>();
 
+  /**
+   * Scoped to the project. A commit hash is globally unique, but the two other
+   * things that land in here are not: `*` is every repository's working tree,
+   * and reading one project's uncommitted files under another's is wrong rather
+   * than merely stale.
+   */
+  private detailsKey(raw: string): string {
+    return `${this.projectKey ?? ""}\u0000${raw}`;
+  }
+
+  private cachedDetails(raw: string): CommitDetails | undefined {
+    return this.detailsCache.get(this.detailsKey(raw));
+  }
+
+  private forgetDetails(raw: string): void {
+    this.detailsCache.delete(this.detailsKey(raw));
+  }
+
   /** Invalidates in-flight detail renders when the selection moves on. */
   private detailsToken = 0;
 
@@ -411,10 +638,11 @@ export class Panel {
   /** Cache hit, or join the in-flight fetch, or start one. */
   private fetchDetails(commit: Commit): Promise<CommitDetails> {
     if (commit.hash !== UNCOMMITTED) {
-      const cached = this.detailsCache.get(commit.hash);
+      const cached = this.cachedDetails(commit.hash);
       if (cached !== undefined) return Promise.resolve(cached);
     }
-    const existing = this.detailsInflight.get(commit.hash);
+    const key = this.detailsKey(commit.hash);
+    const existing = this.detailsInflight.get(key);
     if (existing !== undefined) return existing;
     const fetch = repo.commitDetails(commit.hash, commit)
       .then((details) => {
@@ -422,23 +650,24 @@ export class Panel {
         return details;
       })
       .finally(() => {
-        this.detailsInflight.delete(commit.hash);
+        this.detailsInflight.delete(key);
       });
-    this.detailsInflight.set(commit.hash, fetch);
+    this.detailsInflight.set(key, fetch);
     return fetch;
   }
 
   /** Fire-and-forget cache warmer; never competes with a click for bandwidth. */
   private prefetchDetails(commit: Commit | undefined): void {
     if (!commit || commit.hash === UNCOMMITTED) return;
-    if (this.detailsCache.has(commit.hash)) return;
+    if (this.cachedDetails(commit.hash) !== undefined) return;
     if (this.detailsInflight.size >= 3) return;
     void this.fetchDetails(commit).catch(() => undefined);
   }
 
   private persistTimer: number | undefined;
 
-  private cacheDetails(key: string, details: CommitDetails): void {
+  private cacheDetails(raw: string, details: CommitDetails): void {
+    const key = this.detailsKey(raw);
     this.detailsCache.delete(key);
     this.detailsCache.set(key, details);
     if (this.detailsCache.size > 200) {
@@ -454,7 +683,8 @@ export class Panel {
 
   private async persistDetailsCache(): Promise<void> {
     try {
-      const entries = [...this.detailsCache.entries()].filter(([key]) => key !== UNCOMMITTED);
+      const suffix = ` ${UNCOMMITTED}`;
+      const entries = [...this.detailsCache.entries()].filter(([key]) => !key.endsWith(suffix));
       let payload = JSON.stringify(entries);
       // Storage caps a value at 1 MB; stay far under it.
       while (payload.length > 600_000 && entries.length > 0) {
@@ -469,8 +699,12 @@ export class Panel {
     try {
       const stored = await globalThis.muxy?.storage.get("details.cache");
       if (!Array.isArray(stored)) return;
+      const suffix = ` ${UNCOMMITTED}`;
       for (const entry of stored as Array<[string, CommitDetails]>) {
-        if (Array.isArray(entry) && typeof entry[0] === "string" && entry[0] !== UNCOMMITTED) {
+        // Keys written before the cache was scoped by project carry no
+        // separator; they are dropped rather than read as another project's.
+        if (Array.isArray(entry) && typeof entry[0] === "string" &&
+          entry[0].includes(" ") && !entry[0].endsWith(suffix)) {
           this.detailsCache.set(entry[0], entry[1]);
         }
       }
@@ -665,7 +899,7 @@ export class Panel {
         "tree — no Muxy extension can list a commit's files on this workspace."
       : undefined;
 
-    const cached = this.detailsCache.get(commit.hash);
+    const cached = this.cachedDetails(commit.hash);
     if (cached !== undefined) {
       renderCommitDetails(this.detailsHost, cached, handlers, null, degradedNote);
       // Immutable content — the cached copy is final. Only the working tree moves.
@@ -711,7 +945,7 @@ export class Panel {
 
     // Two fixed hashes — as immutable as a single commit.
     const key = `cmp:${from.hash}..${to.hash}`;
-    const cached = this.detailsCache.get(key);
+    const cached = this.cachedDetails(key);
     if (cached !== undefined) {
       renderCommitDetails(this.detailsHost, cached, handlers, comparison);
       return;
@@ -950,16 +1184,18 @@ export class Panel {
   private subscribe(): void {
     const muxy = globalThis.muxy;
     if (muxy) {
-      for (const event of ["project.switched", "worktree.switched", "worktree.headChanged"]) {
+      for (const event of ["project.switched", "worktree.switched"]) {
         try {
-          muxy.events.subscribe(event, () => {
-            // The new workspace may be remote where the old one was local, or the
-            // reverse, so re-probe rather than trusting the cached answer.
-            if (event !== "worktree.headChanged") repo.resetCapabilities();
-            void this.reload();
-          });
+          // Rebinds to the new workspace: re-resolves the transport (the new one
+          // may be remote where the old was local) and swaps in that project's
+          // cached graph.
+          muxy.events.subscribe(event, () => void this.openProject());
         } catch { /* event not granted */ }
       }
+      try {
+        // Same workspace, moved HEAD — nothing to rebind, just re-read.
+        muxy.events.subscribe("worktree.headChanged", () => void this.reload());
+      } catch { /* event not granted */ }
       try {
         let debounce: number | undefined;
         muxy.events.subscribe("file.changed", () => {
@@ -975,7 +1211,9 @@ export class Panel {
       // verdict: the workspace context syncs after the stores load, and no event
       // reaches a webview for that. Re-probe whenever a degraded panel comes back.
       if (document.visibilityState === "visible" && repo.isDegraded()) {
-        repo.resetCapabilities();
+        // A degraded verdict is never remembered, so rebinding is enough to
+        // make the next read walk the ladder again.
+        repo.rebindWorkspace();
         void this.reload();
       }
       this.updatePolling();
@@ -1010,7 +1248,7 @@ export class Panel {
       if (now >= this.probeRetryAt) {
         this.probeRetryAt = now + this.probeRetryDelay;
         this.probeRetryDelay = Math.min(this.probeRetryDelay * 2, 120_000);
-        repo.resetCapabilities();
+        repo.rebindWorkspace();
         await this.reload();
         if (!repo.isDegraded()) this.probeRetryDelay = 8_000;
         return;

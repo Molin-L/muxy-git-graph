@@ -11,7 +11,9 @@ commit on the current branch, a fetch, a new tag and a stash push are all invisi
 The refresh strategy is therefore layered:
 
 - `worktree.headChanged` → full refresh.
-- `project.switched` / `worktree.switched` → rebind and full refresh.
+- `project.switched` / `worktree.switched` → rebind, then paint that project's
+  cached graph and revalidate it against the digest, refreshing only when the two
+  disagree ([ADR-0019](./0019-warm-graph-per-project.md)).
 - `file.changed`, debounced → refresh **only** the uncommitted-changes row via
   `muxy.git.status`. This is the one thing `file.changed` is genuinely good for.
 - Our own writes → refresh immediately, since we know when we ran them.

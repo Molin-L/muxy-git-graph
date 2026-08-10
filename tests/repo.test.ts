@@ -231,6 +231,100 @@ test("localBranches and remotes read cleanly", async () => {
   assert.deepEqual(await repo.remotes(), []);
 });
 
+/**
+ * The three tests below are about latency, which is the whole reason the graph
+ * feels slow on a remote workspace: every command is an SSH round trip, so what
+ * costs is the *number* of commands, not the work any one of them does.
+ */
+
+/** Counts what actually reaches the transport while `body` runs. */
+async function countingExec<T>(body: () => Promise<T>): Promise<{ value: T; execs: string[] }> {
+  const muxy = (globalThis as Record<string, unknown>).muxy as { exec: (...a: never[]) => unknown };
+  const real = muxy.exec;
+  const execs: string[] = [];
+  muxy.exec = ((command: string[] | { shell: string }, ...rest: never[]) => {
+    execs.push(Array.isArray(command) ? command.join(" ") : command.shell);
+    return (real as (...a: unknown[]) => unknown)(command, ...rest);
+  }) as never;
+  try {
+    return { value: await body(), execs };
+  } finally {
+    muxy.exec = real;
+  }
+}
+
+test("a whole repaint is one round trip", async () => {
+  const repo = await import("../src/data/repo.ts");
+  repo.resetCapabilities();
+  await repo.loadSnapshot(100); // warm the probe, as the panel's first load does
+
+  const { value: snapshot, execs } = await countingExec(() => repo.loadSnapshot(100));
+  assert.equal(execs.length, 1,
+    `head, branch, log, stashes, status, refs, remotes and the in-progress probe ` +
+    `must batch into one command — saw:\n${execs.join("\n")}`);
+
+  // And the batch really did answer all of it.
+  assert.equal(snapshot.state.headBranch, "main");
+  assert.equal(snapshot.state.commits[0].subject, "Uncommitted Changes");
+  assert.ok(snapshot.state.commits.some((c) => c.isStash === true), "stashes are spliced");
+  assert.equal(snapshot.pending, null);
+  assert.deepEqual(snapshot.remotes, []);
+  assert.notEqual(snapshot.digest, "");
+});
+
+test("the snapshot's digest is the one the poll compares against", async () => {
+  const repo = await import("../src/data/repo.ts");
+  // A mismatch here would make every single poll look like the repo had moved,
+  // turning a 4s freshness check into a 4s full reload forever.
+  const snapshot = await repo.loadSnapshot(100);
+  assert.equal(snapshot.digest, await repo.refDigest());
+});
+
+test("a workspace already probed is not probed again", async () => {
+  const repo = await import("../src/data/repo.ts");
+  repo.resetCapabilities();
+  await repo.loadSnapshot(10);
+
+  // Switching to another project and back: the panel rebinds, but this
+  // workspace's rung is already known and costs nothing to recover.
+  repo.rebindWorkspace();
+  const { execs } = await countingExec(() => repo.loadSnapshot(10));
+  assert.deepEqual(execs.filter((c) => c.includes("--version")), [],
+    "walking the ladder again is up to three serial round trips for a known answer");
+  assert.equal(execs.length, 1, "so a warm switch is one command in total");
+
+  // A manual refresh is the deliberate "re-test everything" gesture.
+  repo.resetCapabilities();
+  const after = await countingExec(() => repo.loadSnapshot(10));
+  assert.equal(after.execs.filter((c) => c.includes("--version")).length, 1,
+    "resetCapabilities must still force a real probe");
+});
+
+test("a remembered rung that stops working re-probes on its own", async () => {
+  const repo = await import("../src/data/repo.ts");
+  const muxy = (globalThis as Record<string, unknown>).muxy as { exec: (...a: never[]) => unknown };
+  const real = muxy.exec;
+  repo.resetCapabilities();
+  await repo.loadSnapshot(10); // settles, and is remembered
+
+  try {
+    // The workspace moves out from under the remembered rung: a rejection, which
+    // is a transport failure — git reports its own problems with an exit code.
+    muxy.exec = (() => Promise.reject(new Error("spawn process: No such file or directory"))) as never;
+    await assert.rejects(() => repo.loadSnapshot(10));
+
+    muxy.exec = real;
+    const { execs } = await countingExec(() => repo.loadSnapshot(10));
+    assert.equal(execs.filter((c) => c.includes("--version")).length, 1,
+      "a stale rung must be re-tested, not trusted until the next manual refresh");
+  } finally {
+    muxy.exec = real;
+    // Left settled, not reset: the tests below this one assume a warm probe.
+    repo.resetCapabilities();
+    await repo.loadSnapshot(10);
+  }
+});
+
 test("an unreachable host is an error, not an empty repository", async () => {
   const repo = await import("../src/data/repo.ts");
   const muxy = (globalThis as Record<string, unknown>).muxy as { exec: unknown };

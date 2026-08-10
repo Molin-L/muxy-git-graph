@@ -35,6 +35,13 @@ _Avoid_: label, decoration, badge
 A hash of every ref's target object, used to detect that the repository moved
 underneath us. Cheap to compute and the only signal available for commits, fetches,
 tags and stashes (see [ADR-0008](./docs/adr/0008-freshness-events-plus-focused-poll.md)).
+It is also what validates a cached graph on a project switch
+(see [ADR-0019](./docs/adr/0019-warm-graph-per-project.md)).
+
+**Warm Graph**:
+A project's cached Commit Feed, plus the Ref Digest that says whether it is still
+true. Painted immediately on a switch and revalidated behind the paint.
+_Avoid_: snapshot, stale state
 
 ### Surfaces
 

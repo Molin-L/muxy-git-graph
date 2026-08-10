@@ -11,13 +11,52 @@ import * as remote from "./remote.ts";
 const REC = "\u001e";
 const FLD = "\u001f";
 
+/** Separates the sections of a batched read. Git never emits it. */
+const GRP = "\u001d";
+
 const LOG_FORMAT = [
   "%H", "%P", "%an", "%ae", "%aI", "%D", "%s",
+].join("%x1f") + "%x1e";
+
+// %gd, not %gD — the capital form yields `refs/stash@{0}`.
+const STASH_FORMAT = [
+  "%H", "%gd", "%P", "%an", "%ae", "%aI", "%s",
 ].join("%x1f") + "%x1e";
 
 const DETAIL_FORMAT = [
   "%H", "%P", "%an", "%ae", "%aI", "%cn", "%ce", "%cI", "%B",
 ].join("%x1f");
+
+/* ------------------------------------------------- batched read fragments --- */
+/* Shared between the batch and the single-purpose reads so both produce the
+ * same bytes — the digest in particular is compared across the two. */
+
+/** Prints the section separator between two commands in a batched read. */
+const GRP_SEP = `printf '\\035'`;
+const REF_LIST = `git for-each-ref --format='%(objectname)%(refname)'`;
+const STATUS = `git status --porcelain`;
+/** Proves the shell reached a working tree, so an empty batch is never mistaken
+ *  for an empty repository. */
+const ALIVE = `git rev-parse --is-inside-work-tree 2>/dev/null`;
+/** `symbolic-ref` first: it is the only one that answers on an unborn branch,
+ *  and it is the one that fails on a detached HEAD, where `HEAD` is the answer. */
+const BRANCH = `git symbolic-ref --quiet --short HEAD || git rev-parse --abbrev-ref HEAD 2>/dev/null`;
+
+/** Wrapped in a subshell so its `exit` leaves the probe, not the whole batch. */
+const PENDING_PROBE = "(" + [
+  `[ -f "$(git rev-parse --git-path rebase-merge/head-name)" ] || `
+    + `[ -f "$(git rev-parse --git-path rebase-apply/applying)" ] && { printf %s rebase; exit; }`,
+  `git rev-parse --verify --quiet REVERT_HEAD >/dev/null 2>&1 && { printf %s revert; exit; }`,
+  `git rev-parse --verify --quiet CHERRY_PICK_HEAD >/dev/null 2>&1 && { printf %s cherry-pick; exit; }`,
+  `git rev-parse --verify --quiet MERGE_HEAD >/dev/null 2>&1 && { printf %s merge; exit; }`,
+].join("; ") + ")";
+
+/** Splits a batch's stdout, padding so a truncated reply destructures safely. */
+function sections(stdout: string, count: number): string[] {
+  const parts = stdout.split(GRP);
+  while (parts.length < count) parts.push("");
+  return parts;
+}
 
 export const UNCOMMITTED = "*";
 
@@ -130,7 +169,25 @@ function transport(
  */
 const SAFE_CWD = "/";
 
+/**
+ * A rejection is a transport failure, not a git failure — git reports its own
+ * problems through a non-zero exit code. So a rejection is the one signal that a
+ * remembered rung has gone stale (the workspace moved out from under it), and it
+ * drops the memory so the next read walks the ladder again.
+ */
 function exec(command: string[] | { shell: string }): Promise<ExecResult> {
+  return execOnce(command).catch((err: unknown) => {
+    // `activeKey` is null while the ladder itself is running, where a rejection
+    // is just a rung being ruled out.
+    if (activeKey !== null) {
+      remembered.delete(activeKey);
+      rebindWorkspace();
+    }
+    throw err;
+  });
+}
+
+function execOnce(command: string[] | { shell: string }): Promise<ExecResult> {
   // The relay owns its own timeout and correlation; nothing below applies to it.
   if (transportMode.kind === "background") return execViaBackground(command);
 
@@ -172,6 +229,16 @@ async function tryRun(args: string[]): Promise<string | null> {
   }
 }
 
+/** As `tryRun`, for the reads that batch several commands into one round trip. */
+async function tryRunShell(script: string): Promise<string | null> {
+  try {
+    const res = await exec({ shell: script });
+    return res.exitCode === 0 ? res.stdout : null;
+  } catch {
+    return null;
+  }
+}
+
 /* ---------------------------------------------------------------- reads --- */
 
 export async function repoInfo(): Promise<{ root: string; branch: string }> {
@@ -206,9 +273,20 @@ export async function refDigest(): Promise<string> {
       status?.unstagedFiles.length ?? 0,
     ].join("|");
   }
-  const out = await tryRun(["git", "for-each-ref", "--format=%(objectname)%(refname)"]);
-  const status = await tryRun(["git", "status", "--porcelain"]);
-  return `${out ?? ""}|${status ?? ""}`;
+  // One round trip, not two: the poll runs this every few seconds, and on a
+  // remote workspace a second hop is a second stall.
+  const out = await tryRunShell(`${REF_LIST}; ${GRP_SEP}; ${STATUS}`);
+  const [refs, status] = sections(out ?? "", 2);
+  return digestOf(refs, status);
+}
+
+/**
+ * Both readers of the digest must agree byte for byte: `loadSnapshot` sets the
+ * value the poll then compares against, and any difference in whitespace would
+ * make every single poll look like the repository had moved.
+ */
+function digestOf(refs: string, status: string): string {
+  return `${refs.trim()}|${status.trim()}`;
 }
 
 /**
@@ -225,14 +303,49 @@ export function isDegraded(): boolean {
 }
 
 /**
- * Must be called whenever the active project or worktree changes: the panel
- * follows the active project (ADR-0003), so switching between a local and a
- * remote workspace changes whether `exec` can spawn at all.
+ * The rung each workspace settled on, so that returning to a project already
+ * visited costs no round trips at all. Walking the ladder is three serial execs
+ * on a remote workspace — a second of latency paid before the first useful
+ * command even starts — and the answer only depends on the workspace, which the
+ * repository root identifies.
+ *
+ * Only successes are remembered. A degraded verdict is often transient (Muxy's
+ * workspace context syncs after the stores load), and ADR-0015 leans on
+ * re-probing to recover from it, so caching one would freeze a workspace in
+ * read-only mode.
  */
-export function resetCapabilities(): void {
+const remembered = new Map<string, Capability>();
+
+interface Capability {
+  readonly transport: Transport;
+  readonly probeLog: readonly ProbeAttempt[];
+}
+
+/** The workspace `transportMode` currently belongs to; null while probing. */
+let activeKey: string | null = null;
+
+/**
+ * Forgets the active verdict but keeps what other workspaces settled on. Called
+ * whenever the active project or worktree changes: the panel follows the active
+ * project (ADR-0003), so switching between a local and a remote workspace
+ * changes whether `exec` can spawn at all — but switching *back* does not.
+ */
+export function rebindWorkspace(): void {
   execUsable = null;
+  activeKey = null;
   transportMode = { kind: "direct" };
   awaitingRemoteSetup = false;
+}
+
+/**
+ * As `rebindWorkspace`, but also discards every remembered verdict. This is the
+ * "something is wrong, re-test everything" gesture behind a manual refresh; it
+ * costs the other workspaces one probe each on their next visit, which is the
+ * right trade for a button the user pressed on purpose.
+ */
+export function resetCapabilities(): void {
+  remembered.clear();
+  rebindWorkspace();
 }
 
 /** True when the workspace needs an SSH target before anything can run. */
@@ -277,10 +390,9 @@ async function gitRuns(rung: string): Promise<boolean> {
   }
 }
 
-/** Identifies the workspace for storing its SSH target. */
+/** Identifies the workspace, for anything cached per project. */
 export async function workspaceKey(): Promise<string> {
-  const info = await api().git.repoInfo().catch(() => null);
-  return info?.root ?? "default";
+  return (await projectPath()) ?? "default";
 }
 
 /**
@@ -297,12 +409,29 @@ function probeExec(): Promise<boolean> {
 }
 
 async function runProbe(): Promise<boolean> {
+  // Resolved before anything is spawned: it is a bridge call rather than a
+  // process, and it is what tells us whether this workspace has been solved
+  // before. The ladder below needs the same root for its `cd`, so it is free.
+  const key = await workspaceKey();
+  const known = remembered.get(key);
+  if (known !== undefined) {
+    transportMode = known.transport;
+    execUsable = true;
+    awaitingRemoteSetup = false;
+    activeKey = key;
+    probeLog = [...known.probeLog];
+    return true;
+  }
+
   probeLog = [];
+  activeKey = null;
 
   const settle = (mode: Transport): true => {
     transportMode = mode;
     execUsable = true;
     awaitingRemoteSetup = false;
+    activeKey = key;
+    remembered.set(key, { transport: mode, probeLog: [...probeLog] });
     void persistDiagnostics();
     return true;
   };
@@ -313,7 +442,7 @@ async function runProbe(): Promise<boolean> {
 
   // 2. Same exec, but through a shell so the project path's `~` expands. Muxy
   //    passes the path through unexpanded, which `spawn` cannot resolve.
-  const root = await projectPath();
+  const root = key === "default" ? null : key;
   if (root === null) {
     probeLog.push({
       rung: "shellCwd", sent: "(skipped)", ok: false,
@@ -413,8 +542,33 @@ export function degradedError(what: string): Error {
   );
 }
 
+/** Everything one repaint of the graph needs, gathered in one round trip. */
+export interface RepoSnapshot {
+  readonly state: RepoState;
+  readonly remotes: readonly string[];
+  readonly pending: PendingOperation;
+  readonly digest: string;
+}
+
+/**
+ * The whole of a repaint as a single command.
+ *
+ * Read separately these are seven commands in four serial waves — head, then the
+ * log, then the stashes, then the status — and on a remote workspace every wave
+ * is an SSH round trip. None of them depends on another's *output*, so they are
+ * one shell invocation with the results separated by a group character. That is
+ * the difference between a switch that takes seconds and one that does not.
+ */
+export async function loadSnapshot(maxCount: number): Promise<RepoSnapshot> {
+  if (!(await probeExec())) {
+    const [state, digest] = await Promise.all([loadViaApi(maxCount), refDigest()]);
+    return { state, remotes: [], pending: null, digest };
+  }
+  return snapshotViaExec(maxCount);
+}
+
 export async function loadCommits(maxCount: number): Promise<RepoState> {
-  return (await probeExec()) ? loadViaExec(maxCount) : loadViaApi(maxCount);
+  return (await loadSnapshot(maxCount)).state;
 }
 
 /** Fallback path: everything the graph and the row columns need, minus author
@@ -477,38 +631,68 @@ function uncommittedRow(head: string): Commit {
   };
 }
 
-async function loadViaExec(maxCount: number): Promise<RepoState> {
-  const [head, branch] = await Promise.all([headHash(), currentBranch()]);
-  if (head === null) {
-    return { commits: [], head: null, headBranch: branch, moreAvailable: false };
+/** The order the sections come back in; the parser destructures to match. */
+function batchScript(maxCount: number): string {
+  return [
+    ALIVE,
+    `git rev-parse --verify --quiet HEAD`,
+    BRANCH,
+    `git log --max-count=${maxCount + 1} --format=${remote.quote(LOG_FORMAT)} `
+      + `--branches --tags --remotes HEAD 2>/dev/null`,
+    `git stash list --format=${remote.quote(STASH_FORMAT)} 2>/dev/null`,
+    STATUS,
+    REF_LIST,
+    `git remote`,
+    PENDING_PROBE,
+  ].join(`; ${GRP_SEP}; `);
+}
+
+async function snapshotViaExec(maxCount: number): Promise<RepoSnapshot> {
+  const res = await exec({ shell: batchScript(maxCount) });
+  const [alive, headOut, branchOut, logOut, stashOut, statusOut, refsOut, remotesOut, pendingOut] =
+    sections(res.stdout, 9);
+
+  // An empty batch from a shell that never reached the worktree would otherwise
+  // render as a healthy, empty repository.
+  if (alive.trim() !== "true") {
+    const reason = res.stderr.trim() || res.stdout.trim() || `git exited ${res.exitCode}`;
+    throw new Error(`git rev-parse: ${reason}`);
   }
 
-  const stdout = await run([
-    "git", "log",
-    `--max-count=${maxCount + 1}`,
-    `--format=${LOG_FORMAT}`,
-    "--branches", "--tags", "--remotes", "HEAD",
-  ]);
+  const pendingValue = pendingOut.trim();
+  const shared = {
+    remotes: parseLines(remotesOut),
+    pending: (pendingValue === "" ? null : pendingValue) as PendingOperation,
+    digest: digestOf(refsOut, statusOut),
+  };
+  const head = headOut.trim();
+  const headBranch = branchOut.trim() || "HEAD";
 
-  const parsed = parseLog(stdout);
+  if (head === "") {
+    return { state: { commits: [], head: null, headBranch, moreAvailable: false }, ...shared };
+  }
+
+  const parsed = parseLog(logOut);
   const moreAvailable = parsed.length > maxCount;
-  const commits = moreAvailable ? parsed.slice(0, maxCount) : parsed;
-
-  const merged = [...commits];
+  const merged = moreAvailable ? parsed.slice(0, maxCount) : parsed;
   const known = new Set(merged.map((c) => c.hash));
 
   // Stashes are not reachable from --branches/--tags/--remotes. They are spliced in
   // against their base commit only, so the index commit does not pollute the graph.
-  for (const stash of await stashes()) {
+  for (const stash of parseStashes(stashOut)) {
     if (known.has(stash.hash)) continue;
     const at = merged.findIndex((c) => c.authorDate < stash.authorDate);
     merged.splice(at === -1 ? merged.length : at, 0, stash);
     known.add(stash.hash);
   }
 
-  if (await hasUncommittedChanges()) merged.unshift(uncommittedRow(head));
+  if (statusOut.trim() !== "") merged.unshift(uncommittedRow(head));
 
-  return { commits: merged, head, headBranch: branch, moreAvailable };
+  return { state: { commits: merged, head, headBranch, moreAvailable }, ...shared };
+}
+
+function parseLines(out: string): string[] {
+  return out.split("\n").map((line) => line.trim()).filter((line) => line !== "");
 }
 
 function parseLog(stdout: string): Commit[] {
@@ -546,14 +730,7 @@ function parseRefs(decoration: string): Ref[] {
   return refs;
 }
 
-async function stashes(): Promise<Commit[]> {
-  const out = await tryRun([
-    "git", "stash", "list",
-    // %gd, not %gD — the capital form yields `refs/stash@{0}`.
-    `--format=%H%x1f%gd%x1f%P%x1f%an%x1f%ae%x1f%aI%x1f%s%x1e`,
-  ]);
-  if (!out) return [];
-
+function parseStashes(out: string): Commit[] {
   const list: Commit[] = [];
   for (const record of out.split(REC)) {
     const line = record.replace(/^\n/, "");
@@ -574,18 +751,6 @@ async function stashes(): Promise<Commit[]> {
     });
   }
   return list;
-}
-
-export async function hasUncommittedChanges(): Promise<boolean> {
-  const out = await tryRun(["git", "status", "--porcelain", "--untracked-files=normal"]);
-  return (out ?? "").trim() !== "";
-}
-
-export async function currentBranch(): Promise<string> {
-  const out = await tryRun(["git", "rev-parse", "--abbrev-ref", "HEAD"]);
-  if (out !== null && out.trim() !== "") return out.trim();
-  const info = await api().git.repoInfo().catch(() => null);
-  return info?.currentBranch ?? "HEAD";
 }
 
 export async function commitDetails(hash: string, known?: Commit): Promise<CommitDetails> {
@@ -778,20 +943,11 @@ export async function comparisonDiff(
 
 export async function pendingOperation(): Promise<PendingOperation> {
   if (!(await probeExec())) return null;
-  const probe = [
-    `[ -f "$(git rev-parse --git-path rebase-merge/head-name)" ] || `
-      + `[ -f "$(git rev-parse --git-path rebase-apply/applying)" ] && { printf %s rebase; exit; }`,
-    `git rev-parse --verify --quiet REVERT_HEAD >/dev/null 2>&1 && { printf %s revert; exit; }`,
-    `git rev-parse --verify --quiet CHERRY_PICK_HEAD >/dev/null 2>&1 && { printf %s cherry-pick; exit; }`,
-    `git rev-parse --verify --quiet MERGE_HEAD >/dev/null 2>&1 && { printf %s merge; exit; }`,
-  ].join("; ");
-  try {
-    const res = await api().exec({ shell: probe });
-    const value = res.stdout.trim();
-    return value === "" ? null : (value as PendingOperation);
-  } catch {
-    return null;
-  }
+  // Through `exec`, not `api().exec`: on a remote workspace the probe has to
+  // ride the same transport as every other read or it answers about the wrong
+  // machine.
+  const value = (await tryRunShell(PENDING_PROBE))?.trim() ?? "";
+  return value === "" ? null : (value as PendingOperation);
 }
 
 export async function localBranches(): Promise<string[]> {
