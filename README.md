@@ -38,7 +38,7 @@ supported.
   without disturbing the selection.
 - **Keyboard** — `⌘R` refresh, `⌘H` scroll to HEAD, `⌘F` jump to the find bar,
   `⌘G`/`⇧⌘G` next and previous match, `↑`/`↓` move the selection, `Esc` clear the
-  search, then close the details pane.
+  search, then close the details pane, `⌥⌘L` verbose logging.
 - Columns drop as the panel narrows, so it stays usable at any width.
 
 ## Building
@@ -66,12 +66,13 @@ npm run typecheck
 | `src/view/` | Panel, virtualised rows, details, menus, dialogs. |
 | `src/actions/` | Context-menu definitions. |
 | `src/diff/` | Diff tab and unified-diff parser. |
+| `src/log.ts` | The log, which is `console`, which is Muxy's Extension Output panel. |
 | `docs/adr/` | Why everything is the way it is. Read `0001` first. |
 | `CONTEXT.md` | Glossary. Lane, Vertex, Ref, Commit Feed, Graph Tab. |
 
 ## Design decisions
 
-Nineteen ADRs in [`docs/adr/`](./docs/adr/). The ones that will surprise you:
+Twenty ADRs in [`docs/adr/`](./docs/adr/). The ones that will surprise you:
 
 - **[0002](./docs/adr/0002-data-layer-split.md)** — reads go through `muxy.exec`,
   writes through `muxy.git`. Split by intent, not capability.
@@ -87,6 +88,30 @@ Nineteen ADRs in [`docs/adr/`](./docs/adr/). The ones that will surprise you:
   the commit data, never the DOM, and highlights as rows render.
 - **[0019](./docs/adr/0019-warm-graph-per-project.md)** — switching projects paints
   a cached graph and revalidates behind it. A whole repaint is one command.
+
+## Watching what it does
+
+Open Muxy's **Extension Output** panel (View → Toggle Extension Output). Every line
+this extension writes lands there, tagged with the surface that wrote it:
+
+```
+[git-graph:panel] panel starting extension=git-graph verbose=false
+[git-graph:panel] binding to project key=/Users/dev/gateway warm=true
+[git-graph:panel] probing how git can be reached key=/Users/dev/gateway
+[git-graph:panel] probe direct: ok sent="git --version" detail="git version 2.51.0"
+[git-graph:panel] transport settled via=direct key=/Users/dev/gateway
+[git-graph:panel] graph reloaded key=/Users/dev/gateway commits=300 via=direct ms=181
+```
+
+By default only milestones are logged — a project bound, a transport rung settled, a
+reload finished, an action failed — so an idle panel stays quiet in a panel shared
+with every other extension. Press **`⌥⌘L`** in the graph panel for per-command
+detail: every `exec` with its transport, exit code and duration, and every relay
+round trip. The toggle persists, so the diff tab and the next reload stay verbose
+until you press it again.
+
+See [ADR-0020](./docs/adr/0020-log-to-muxys-extension-output.md) for why `console`
+is the channel.
 
 ## Remote (SSH) workspaces
 

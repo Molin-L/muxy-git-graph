@@ -1,4 +1,5 @@
 import { after, before, test } from "node:test";
+import "./quiet-log.ts";
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";

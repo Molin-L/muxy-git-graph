@@ -7,6 +7,7 @@
  * payloads are capped at 64 KiB.
  */
 
+import * as log from "../log.ts";
 import type { ExecResult } from "../muxy.d.ts";
 
 const CHANNEL = "extension.git-graph";
@@ -106,11 +107,20 @@ export function execViaBackground(
   ensureSubscribed();
   const id = `${SURFACE}-${++counter}`;
   const label = Array.isArray(command) ? command.join(" ") : command.shell;
+  const started = Date.now();
 
   return new Promise<ExecResult>((resolve, reject) => {
     pending.set(id, {
-      resolve,
-      reject,
+      resolve: (result) => {
+        log.debug("relay done", {
+          id, exit: result.exitCode, bytes: result.stdout.length, ms: Date.now() - started,
+        });
+        resolve(result);
+      },
+      reject: (error) => {
+        log.debug("relay failed", { id, ms: Date.now() - started, error: log.reason(error) });
+        reject(error);
+      },
       out: [],
       err: [],
       timer: setTimeout(() => {
@@ -120,9 +130,15 @@ export function execViaBackground(
       }, timeoutMs),
     });
 
+    // `verbose` travels with the request because the background context cannot
+    // read the toggle: its bridge has storage, but nothing tells it the panel
+    // flipped one. Carrying it per request keeps both halves of the relay on the
+    // same setting without a second channel.
+    const verbose = log.isVerbose();
+    log.debug("relay exec", { id, cmd: log.clip(label) });
     const request = Array.isArray(command)
-      ? { kind: "exec", id, argv: command }
-      : { kind: "exec", id, shell: command.shell };
+      ? { kind: "exec", id, argv: command, verbose }
+      : { kind: "exec", id, shell: command.shell, verbose };
 
     // A webview emit is relayed through background.js and rejects when no
     // background script is running — which is exactly the failure we want here.

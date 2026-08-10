@@ -1,6 +1,7 @@
 import { computeLayout } from "../graph/layout.ts";
 import { canDropCommit } from "../graph/queries.ts";
 import type { GraphConfig, GraphLayout } from "../graph/types.ts";
+import * as log from "../log.ts";
 import * as repo from "../data/repo.ts";
 import { UNCOMMITTED, write } from "../data/repo.ts";
 import type { ChangedFile, Commit, CommitDetails, PendingOperation, Ref, RepoState } from "../data/repo.ts";
@@ -174,6 +175,7 @@ export class Panel {
     this.projectKey = key;
 
     const cached = key === null ? undefined : this.projects.get(key);
+    log.info("binding to project", { key, warm: cached !== undefined });
     if (cached === undefined) {
       // Nothing to show for this project yet — and what is on screen belongs to
       // the previous one, so clear it rather than leave the wrong repository up.
@@ -198,12 +200,15 @@ export class Panel {
       const digest = await repo.refDigest();
       if (key !== this.projectKey) return;
       if (digest === expected) {
+        log.info("warm graph is still true", { key });
         this.statusLabel.textContent = "";
         this.updatePolling();
         return;
       }
-    } catch {
+      log.info("warm graph is stale — reloading", { key });
+    } catch (err) {
       if (key !== this.projectKey) return;
+      log.warn("could not revalidate the warm graph", { key, error: log.reason(err) });
     }
     await this.reload();
   }
@@ -514,7 +519,10 @@ export class Panel {
     const key = this.projectKey;
     try {
       const { state, remotes, pending, digest } = await repo.loadSnapshot(this.loaded);
-      if (key !== this.projectKey) return;
+      if (key !== this.projectKey) {
+        log.debug("discarding a reload for a project the user has left", { key });
+        return;
+      }
       this.state = state;
       this.remotes = remotes;
       this.pending = pending;
@@ -526,6 +534,13 @@ export class Panel {
       this.render();
       this.renderBanner();
       this.remember();
+      log.info("graph reloaded", {
+        key,
+        commits: state.commits.length,
+        via: repo.isDegraded() ? "muxy.git" : repo.transportKind(),
+        pending,
+        ms: Date.now() - started,
+      });
 
       if (state.commits.length === 0) {
         this.showNotice(state.head === null
@@ -547,6 +562,7 @@ export class Panel {
     } catch (err) {
       // A remote workspace makes every read a round trip, so surface the actual
       // failing command rather than leaving a blank panel.
+      log.error("reload failed", { key, ms: Date.now() - started, error: log.reason(err) });
       if (key === this.projectKey) {
         this.showNotice(err instanceof Error ? err.message : String(err), true);
       }
@@ -1136,6 +1152,7 @@ export class Panel {
         },
       });
     } catch (err) {
+      log.error("could not open the diff tab", { path: file.path, error: log.reason(err) });
       this.statusLabel.textContent = "Could not open diff";
       this.statusLabel.title = err instanceof Error ? err.message : String(err);
     }
@@ -1167,11 +1184,15 @@ export class Panel {
 
   private async perform(label: string, operation: () => Promise<unknown>): Promise<void> {
     this.statusLabel.textContent = `${label}…`;
+    const started = Date.now();
+    log.info(`${label}…`);
     try {
       await operation();
+      log.info(`${label} ok`, { ms: Date.now() - started });
       this.statusLabel.textContent = "";
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
+      log.error(`${label} failed`, { ms: Date.now() - started, error: message });
       this.statusLabel.textContent = `${label} failed`;
       this.statusLabel.title = message;
       await confirmDialog(`${label} failed`, message, "Dismiss");
@@ -1189,20 +1210,31 @@ export class Panel {
           // Rebinds to the new workspace: re-resolves the transport (the new one
           // may be remote where the old was local) and swaps in that project's
           // cached graph.
-          muxy.events.subscribe(event, () => void this.openProject());
-        } catch { /* event not granted */ }
+          muxy.events.subscribe(event, () => {
+            log.info(`event ${event}`);
+            void this.openProject();
+          });
+        } catch (err) { log.warn("event not granted", { event, error: log.reason(err) }); }
       }
       try {
         // Same workspace, moved HEAD — nothing to rebind, just re-read.
-        muxy.events.subscribe("worktree.headChanged", () => void this.reload());
-      } catch { /* event not granted */ }
+        muxy.events.subscribe("worktree.headChanged", () => {
+          log.info("event worktree.headChanged");
+          void this.reload();
+        });
+      } catch (err) {
+        log.warn("event not granted", { event: "worktree.headChanged", error: log.reason(err) });
+      }
       try {
         let debounce: number | undefined;
         muxy.events.subscribe("file.changed", () => {
+          log.debug("event file.changed");
           window.clearTimeout(debounce);
           debounce = window.setTimeout(() => void this.pollNow(), 400);
         });
-      } catch { /* event not granted */ }
+      } catch (err) {
+        log.warn("event not granted", { event: "file.changed", error: log.reason(err) });
+      }
     }
 
     // Poll only while the panel is visible — an unfocused panel costs nothing.
@@ -1309,6 +1341,14 @@ export class Panel {
     if (meta && is("h")) {
       claim();
       this.scrollToHead();
+      return;
+    }
+    // The one way in to per-command logging. Muxy's Extension Output panel is
+    // shared with every other extension, so this is off until asked for.
+    if (meta && event.altKey && is("l")) {
+      claim();
+      log.setVerbose(!log.isVerbose());
+      this.flashStatus(log.isVerbose() ? "verbose logging on" : "verbose logging off");
       return;
     }
     // Arrows belong to the text cursor while the find input has focus.

@@ -1,4 +1,5 @@
 import { before, test } from "node:test";
+import "./quiet-log.ts";
 import assert from "node:assert/strict";
 
 /**

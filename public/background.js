@@ -24,6 +24,31 @@
   var CHANNEL = "extension.git-graph";
   var CHUNK = 8 * 1024;
 
+  /*
+   * Muxy shims `console` in this context too, so log lines land in the same
+   * Extension Output panel as the panel's (see src/log.ts). This half cannot read
+   * the verbose toggle — nothing tells a background script that a webview flipped
+   * a setting — so each request carries it, and per-command lines are printed
+   * only when the panel that asked was itself verbose.
+   */
+  function log(message) {
+    try {
+      console.log("[git-graph:bg] " + message);
+    } catch (error) {
+      // A context without the shim; the relay still works.
+    }
+  }
+
+  /** Per-command chatter, printed only for a request that asked for it. */
+  function debug(request, message) {
+    if (request && request.verbose) log("debug " + message);
+  }
+
+  function clip(text) {
+    var flat = String(text).replace(/\s+/g, " ").trim();
+    return flat.length <= 120 ? flat : flat.slice(0, 119) + "…";
+  }
+
   function send(message) {
     try {
       muxy.events.emit(CHANNEL, message);
@@ -44,6 +69,9 @@
   muxy.events.subscribe(CHANNEL, function (payload) {
     if (!payload || payload.kind !== "exec" || typeof payload.id !== "string") return;
 
+    var command = payload.argv ? payload.argv.join(" ") : payload.shell;
+    debug(payload, "exec " + payload.id + " cmd=" + clip(command));
+
     var result;
     try {
       // Synchronous in this context; Muxy owns where it runs.
@@ -51,15 +79,16 @@
         ? muxy.exec(payload.argv.map(String))
         : muxy.exec({ shell: String(payload.shell || "") });
     } catch (error) {
-      send({
-        kind: "exec-error",
-        id: payload.id,
-        message: String((error && error.message) || error),
-      });
+      var message = String((error && error.message) || error);
+      // Always: this is the relay refusing to run, which is what a panel showing
+      // nothing on a remote workspace looks like from the inside.
+      log("exec threw id=" + payload.id + " cmd=" + clip(command) + " error=" + clip(message));
+      send({ kind: "exec-error", id: payload.id, message: message });
       return;
     }
 
-    var outChunks = sendChunks(payload.id, "out", String(result.stdout || ""));
+    var stdout = String(result.stdout || "");
+    var outChunks = sendChunks(payload.id, "out", stdout);
     var errChunks = sendChunks(payload.id, "err", String(result.stderr || ""));
     send({
       kind: "exec-done",
@@ -68,5 +97,9 @@
       outChunks: outChunks,
       errChunks: errChunks,
     });
+    debug(payload, "done " + payload.id + " exit=" + Number(result.exitCode || 0) +
+      " bytes=" + stdout.length + " chunks=" + (outChunks + errChunks));
   });
+
+  log("relay ready");
 })();

@@ -76,3 +76,9 @@ A repository registered in Muxy's sidebar. The unit `muxy.git` targets by defaul
 **Worktree**:
 A checkout belonging to a Project. A Project always has an active Worktree, and all
 git reads and writes are scoped to it.
+
+**Extension Output**:
+Muxy's panel for extension logs, shared by every installed extension. Muxy feeds it
+by wrapping `console` in each surface, so it is where every line this extension
+writes ends up (see [ADR-0020](./docs/adr/0020-log-to-muxys-extension-output.md)).
+_Avoid_: console, devtools, debug panel

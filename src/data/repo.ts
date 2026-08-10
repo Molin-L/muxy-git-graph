@@ -5,6 +5,7 @@
  */
 
 import type { ExecResult } from "../muxy.d.ts";
+import * as log from "../log.ts";
 import { execViaBackground } from "./background-rpc.ts";
 import * as remote from "./remote.ts";
 
@@ -176,9 +177,19 @@ const SAFE_CWD = "/";
  * drops the memory so the next read walks the ladder again.
  */
 function exec(command: string[] | { shell: string }): Promise<ExecResult> {
-  return execOnce(command).catch((err: unknown) => {
+  const cmd = log.clip(Array.isArray(command) ? command.join(" ") : command.shell);
+  const via = transportMode.kind;
+  const started = Date.now();
+  return execOnce(command).then((res) => {
+    log.debug("exec", { cmd, via, exit: res.exitCode, ms: Date.now() - started });
+    return res;
+  }, (err: unknown) => {
     // `activeKey` is null while the ladder itself is running, where a rejection
-    // is just a rung being ruled out.
+    // is just a rung being ruled out — expected, and already reported by the
+    // probe's own line, so it is not worth a warning.
+    const failure = { cmd, via, ms: Date.now() - started, error: log.reason(err) };
+    if (activeKey === null) log.debug("exec failed", failure);
+    else log.warn("exec failed", failure);
     if (activeKey !== null) {
       remembered.delete(activeKey);
       rebindWorkspace();
@@ -331,6 +342,7 @@ let activeKey: string | null = null;
  * changes whether `exec` can spawn at all — but switching *back* does not.
  */
 export function rebindWorkspace(): void {
+  log.debug("rebinding workspace", { was: transportMode.kind, key: activeKey });
   execUsable = null;
   activeKey = null;
   transportMode = { kind: "direct" };
@@ -344,6 +356,7 @@ export function rebindWorkspace(): void {
  * right trade for a button the user pressed on purpose.
  */
 export function resetCapabilities(): void {
+  log.info("re-testing every workspace's transport", { forgotten: remembered.size });
   remembered.clear();
   rebindWorkspace();
 }
@@ -369,6 +382,19 @@ export function probeReport(): readonly ProbeAttempt[] {
   return probeLog;
 }
 
+/**
+ * Every rung is recorded twice: into the report the diagnostics dialog reads, and
+ * into the Extension Output panel. The ladder is the first thing to look at when a
+ * workspace shows nothing, and a rung that failed silently is the whole mystery.
+ */
+function recordAttempt(attempt: ProbeAttempt): void {
+  probeLog.push(attempt);
+  log.info(`probe ${attempt.rung}: ${attempt.ok ? "ok" : "no"}`, {
+    sent: log.clip(attempt.sent),
+    detail: log.clip(attempt.detail),
+  });
+}
+
 async function gitRuns(rung: string): Promise<boolean> {
   const probe = ["git", "--version"];
   const sent = transport(probe);
@@ -376,13 +402,13 @@ async function gitRuns(rung: string): Promise<boolean> {
   try {
     const res = await exec(probe);
     const ok = res.exitCode === 0;
-    probeLog.push({
+    recordAttempt({
       rung, sent: rendered, ok,
       detail: ok ? res.stdout.trim() : (res.stderr.trim() || `exit ${res.exitCode}`),
     });
     return ok;
   } catch (err) {
-    probeLog.push({
+    recordAttempt({
       rung, sent: rendered, ok: false,
       detail: err instanceof Error ? err.message : String(err),
     });
@@ -420,9 +446,11 @@ async function runProbe(): Promise<boolean> {
     awaitingRemoteSetup = false;
     activeKey = key;
     probeLog = [...known.probeLog];
+    log.debug("transport remembered", { via: known.transport.kind, key });
     return true;
   }
 
+  log.info("probing how git can be reached", { key });
   probeLog = [];
   activeKey = null;
 
@@ -432,6 +460,7 @@ async function runProbe(): Promise<boolean> {
     awaitingRemoteSetup = false;
     activeKey = key;
     remembered.set(key, { transport: mode, probeLog: [...probeLog] });
+    log.info("transport settled", { via: mode.kind, key });
     void persistDiagnostics();
     return true;
   };
@@ -444,7 +473,7 @@ async function runProbe(): Promise<boolean> {
   //    passes the path through unexpanded, which `spawn` cannot resolve.
   const root = key === "default" ? null : key;
   if (root === null) {
-    probeLog.push({
+    recordAttempt({
       rung: "shellCwd", sent: "(skipped)", ok: false,
       detail: "muxy.git.repoInfo() returned no root path, so there was nothing to cd into",
     });
@@ -461,6 +490,7 @@ async function runProbe(): Promise<boolean> {
 
   // Nothing can run git here. `muxy.git` follows the workspace, so that becomes
   // the read-only source.
+  log.warn("no transport reaches git — falling back to read-only muxy.git", { key });
   transportMode = { kind: "direct" };
   execUsable = false;
   awaitingRemoteSetup = false;
@@ -480,7 +510,7 @@ async function backgroundReachesRepo(root: string | null): Promise<boolean> {
     const res = await exec(["git", "rev-parse", "--show-toplevel"]);
     const toplevel = res.stdout.trim();
     if (res.exitCode !== 0 || toplevel === "") {
-      probeLog.push({
+      recordAttempt({
         rung: "background", sent, ok: false,
         detail: res.stderr.trim() || `exit ${res.exitCode}`,
       });
@@ -488,16 +518,16 @@ async function backgroundReachesRepo(root: string | null): Promise<boolean> {
     }
     const trim = (p: string): string => p.replace(/\/+$/, "");
     if (root !== null && trim(toplevel) !== trim(root)) {
-      probeLog.push({
+      recordAttempt({
         rung: "background", sent, ok: false,
         detail: `reached ${toplevel}, but the active workspace is ${root} — refusing to show the wrong repository`,
       });
       return false;
     }
-    probeLog.push({ rung: "background", sent, ok: true, detail: toplevel });
+    recordAttempt({ rung: "background", sent, ok: true, detail: toplevel });
     return true;
   } catch (err) {
-    probeLog.push({
+    recordAttempt({
       rung: "background", sent, ok: false,
       detail: err instanceof Error ? err.message : String(err),
     });

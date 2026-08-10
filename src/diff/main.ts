@@ -1,5 +1,6 @@
 import "../styles/global.css";
 import "./diff.css";
+import * as log from "../log.ts";
 import { comparisonDiff, fileDiff } from "../data/repo.ts";
 import { parseUnifiedDiff, toSplitRows } from "./parse.ts";
 import type { DiffFile, DiffRow } from "./parse.ts";
@@ -16,10 +17,14 @@ interface DiffTabData {
 
 type Style = "unified" | "split";
 
+log.useSurface("diff");
+
 const root = document.getElementById("root");
 if (root) void start(root);
 
 async function start(host: HTMLElement): Promise<void> {
+  // The tab shares the panel's toggle: it is one extension, logging to one place.
+  await log.restoreVerbose();
   let style: Style = (await readStyle()) ?? "unified";
   let data = (globalThis.muxy?.data ?? {}) as DiffTabData;
   let files: DiffFile[] = [];
@@ -58,13 +63,20 @@ async function start(host: HTMLElement): Promise<void> {
     }
 
     body.replaceChildren(el("div", "diff__empty", "Loading…"));
+    const started = Date.now();
+    log.info("diff opening", {
+      path: data.path,
+      at: data.from && data.to ? `${data.from}..${data.to}` : data.hash,
+    });
     try {
       const patch = data.from && data.to
         ? await comparisonDiff(data.from, data.to, data.path, data.oldPath)
         : await fileDiff(data.hash ?? "*", data.path, data.oldPath);
       files = parseUnifiedDiff(patch);
+      log.info("diff loaded", { path: data.path, bytes: patch.length, ms: Date.now() - started });
       draw();
     } catch (err) {
+      log.error("diff failed", { path: data.path, error: log.reason(err) });
       files = [];
       body.replaceChildren(
         el("div", "diff__empty", err instanceof Error ? err.message : String(err)));
