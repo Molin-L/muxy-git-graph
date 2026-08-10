@@ -423,6 +423,17 @@ class GraphBuilder {
     let i = startAt;
     let vertex = this.vertices[i];
     let parentVertex = this.vertices[i].getNextParent();
+
+    // Both walks below only ever move downward, so a parent sitting at or above
+    // its own child has no reachable point and would leave the child forever
+    // unprocessed — an infinite loop in the constructor. The log is asked for in
+    // topological order so this should not arise, but stashes are spliced in by
+    // date and a caller can pass any ordering it likes. Drop the edge instead.
+    while (parentVertex !== null && parentVertex.id !== NULL_VERTEX_ID && parentVertex.id <= startAt) {
+      vertex.registerParentProcessed();
+      parentVertex = vertex.getNextParent();
+    }
+
     let lastPoint = vertex.isNotOnBranch() ? vertex.getNextPoint() : vertex.getPoint();
     let curPoint: Point | null;
 

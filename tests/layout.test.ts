@@ -80,6 +80,57 @@ test("rounded and angular styles differ only in path data", () => {
   assert.ok(!angular.paths.some((p) => p.d.includes("C")), "angular style uses no curves");
 });
 
+test("a parent listed above its child is dropped, not walked forever", () => {
+  // Commit-date skew (or a stash spliced in by date) can put a parent above its
+  // child. The lane walk only moves downward, so before this was handled the
+  // vertex never finished and the panel hung on an unbounded loop.
+  const commits = [
+    { hash: "e", parents: ["c"] },
+    { hash: "c", parents: ["b"] },
+    { hash: "d", parents: ["c", "b"] }, // "c" sits above "d"
+    { hash: "b", parents: ["a"] },
+    { hash: "a", parents: [] },
+  ];
+
+  const layout = computeLayout(commits, TEST_CONFIG, { commitHead: "e" });
+
+  assert.equal(layout.vertices.length, commits.length, "every commit still gets a lane");
+  for (const p of layout.paths) assert.ok(!/NaN|undefined/.test(p.d), `path data is numeric: ${p.d}`);
+});
+
+test("no commit ordering can hang the layout", () => {
+  // Fuzz: build a topologically ordered DAG, then swap one adjacent pair to
+  // invert an edge. Every permutation must terminate and place every vertex.
+  let seed = 1;
+  const rand = () => ((seed = (seed * 1103515245 + 12345) & 0x7fffffff) / 0x7fffffff);
+  const size = 7;
+
+  for (let round = 0; round < 200; round++) {
+    const names = Array.from({ length: size }, (_, i) => `c${i}`);
+    const ordered = names.map((hash, i) => {
+      const parents: string[] = [];
+      if (i < size - 1) {
+        const pick = () => names[i + 1 + Math.floor(rand() * (size - i - 1))];
+        parents.push(pick());
+        const second = pick();
+        if (rand() < 0.4 && second !== parents[0]) parents.push(second);
+      }
+      return { hash, parents };
+    });
+
+    for (let swap = 0; swap < size - 1; swap++) {
+      const commits = ordered.slice();
+      [commits[swap], commits[swap + 1]] = [commits[swap + 1], commits[swap]];
+      const layout = computeLayout(commits, TEST_CONFIG, { commitHead: commits[0].hash });
+      assert.equal(
+        layout.vertices.length,
+        size,
+        `every commit placed for ${JSON.stringify(commits)}`,
+      );
+    }
+  }
+});
+
 test("expanding a commit pushes later vertices down by expandY", () => {
   const fixture = FIXTURES.find((f) => f.name === "linear")!;
   const flat = computeLayout(fixture.commits, TEST_CONFIG, { commitHead: fixture.head });

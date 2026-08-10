@@ -637,7 +637,9 @@ function batchScript(maxCount: number): string {
     ALIVE,
     `git rev-parse --verify --quiet HEAD`,
     BRANCH,
-    `git log --max-count=${maxCount + 1} --format=${remote.quote(LOG_FORMAT)} `
+    // --topo-order keeps every parent below its children. Date order lets commit-date
+    // skew invert a pair, which the downward-only lane walk cannot draw (see layout.ts).
+    `git log --max-count=${maxCount + 1} --topo-order --format=${remote.quote(LOG_FORMAT)} `
       + `--branches --tags --remotes HEAD 2>/dev/null`,
     `git stash list --format=${remote.quote(STASH_FORMAT)} 2>/dev/null`,
     STATUS,
