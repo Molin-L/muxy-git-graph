@@ -147,6 +147,22 @@ test("commitDetails on the initial commit works (--root)", async () => {
   assert.equal(details.files[0].deletions, 0);
 });
 
+test("commitDetails on a merge lists what it brought onto the branch", async () => {
+  const repo = await import("../src/data/repo.ts");
+  const state = await repo.loadCommits(100);
+  const merge = state.commits.find((c) => c.subject === "Merge branch 'feature'")!;
+
+  // Plain `git diff-tree` prints nothing for a merge, which read as "0 files changed".
+  const details = await repo.commitDetails(merge.hash);
+  assert.deepEqual(details.files.map((f) => f.path), ["b.txt"],
+    "the merge carries the feature branch's file, not the first parent's own work");
+  assert.equal(details.files[0].status, "A");
+  assert.equal(details.files[0].additions, 1, "counts survive the first-parent reading");
+
+  const patch = await repo.fileDiff(merge.hash, "b.txt");
+  assert.match(patch, /\+feature/, "the listed file opens with a real patch");
+});
+
 test("uncommitted details list modified and untracked files", async () => {
   const repo = await import("../src/data/repo.ts");
   const details = await repo.commitDetails("*");

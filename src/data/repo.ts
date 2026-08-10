@@ -897,9 +897,16 @@ async function uncommittedDetails(): Promise<CommitDetails> {
   };
 }
 
+/**
+ * `--diff-merges=first-parent` is what makes a merge commit list anything at all:
+ * left to itself git diffs a merge against every parent and prints nothing, so a
+ * merged pull request read as "0 files changed". Against the first parent it
+ * lists what the merge brought onto the branch, which is what the row means.
+ */
 async function changedFiles(hash: string): Promise<ChangedFile[]> {
   const out = await run([
-    "git", "diff-tree", "--no-commit-id", "-r", "-M", "--root", "--raw", "--numstat", hash,
+    "git", "diff-tree", "--no-commit-id", "-r", "-M", "--root", "--raw", "--numstat",
+    "--diff-merges=first-parent", hash,
   ]);
   return parseRawNumstat(out);
 }
@@ -963,7 +970,11 @@ export async function fileDiff(hash: string, path: string, oldPath?: string): Pr
     const res = await api().exec(["git", "diff", "--no-index", "--no-color", "/dev/null", path]);
     return res.exitCode <= 1 ? res.stdout : "";
   }
-  return run(["git", "show", "--format=", "--no-color", "-M", hash, ...paths]);
+  // Same first-parent reading as `changedFiles`, so a file listed under a merge
+  // opens with the patch that listing promised rather than an empty diff.
+  return run([
+    "git", "show", "--format=", "--no-color", "-M", "--diff-merges=first-parent", hash, ...paths,
+  ]);
 }
 
 export async function comparisonDiff(
