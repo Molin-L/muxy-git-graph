@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>File tree harness</title>
+    <!-- Muxy injects the theme; outside the app the pane would render on the
+         default white with no accent, so a stand-in dark theme goes here. -->
+    <style>
+      :root {
+        --muxy-background: #000;
+        --muxy-surface: #141414;
+        --muxy-border: #2a2a2a;
+        --muxy-hover: #1e1e1e;
+        --muxy-foreground: #e6e6e6;
+        --muxy-foreground-muted: #8a8a8a;
+        --muxy-accent: #4a9eff;
+        --muxy-accent-soft: #4a9eff26;
+        --muxy-diff-add: #4ec9b0;
+        --muxy-diff-remove: #f14c4c;
+        --muxy-diff-hunk: #d7ba7d;
+        --muxy-topbar-height: 32px;
+      }
+      #root { padding: var(--s6); max-width: 460px; }
+    </style>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="../src/dev-file-tree.ts"></script>
+  </body>
+</html>

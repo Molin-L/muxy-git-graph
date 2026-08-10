@@ -626,7 +626,71 @@ body.resizing { cursor: col-resize; user-select: none; }
 }
 
 .details__files { display: flex; flex-direction: column; margin-top: var(--s2); }
+.details__filelist { display: flex; flex-direction: column; }
 .details__empty { padding: var(--s5) 0; color: var(--muxy-foreground-muted); }
+
+/* Tree / list toggle, right-aligned in the count row. */
+.fileview { margin-left: auto; flex: 0 0 auto; display: inline-flex; gap: 2px; }
+
+.fileview__btn {
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: none;
+  border: none;
+  border-radius: var(--radius-chip);
+  color: var(--muxy-foreground-muted);
+}
+
+.fileview__btn:hover:not(:disabled) { background: var(--muxy-hover); border-color: transparent; }
+.fileview__btn--on { background: var(--muxy-accent-soft); color: var(--muxy-accent); }
+
+.fileview__icon { display: block; width: 14px; height: 14px; fill: currentColor; }
+
+/* ------------------------------------------------------------- file tree --- */
+
+.tree, .tree__children { margin: 0; padding: 0; list-style: none; }
+/* One indent per level. Enough of a step to read as one, and no more: a tree is
+   several rows deep where the list is one, so every pixel here is spent again
+   on each level. */
+.tree__children { padding-left: 12px; }
+.tree__children--hidden { display: none; }
+.tree li { min-width: 0; }
+
+/* Rows are flex children of the pane in the list, but of an <li> in the tree.
+   A tree row is always one line — no directory beneath the name — so it drops
+   the list's two-line allowances and packs to the height of its own text. */
+.tree .file {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  gap: var(--s2);
+  min-height: 0;
+  padding: 1px var(--s3);
+}
+
+.file--folder .file__name {
+  flex: 1 1 auto;
+  min-width: 0;
+  color: var(--muxy-foreground-muted);
+}
+
+.file__twisty {
+  flex: 0 0 auto;
+  width: 14px;
+  /* The badge column's height, so the marker sits on the folder name's line. */
+  height: 16px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--muxy-foreground-muted);
+}
+
+.file__chevron { display: block; width: 10px; height: 10px; fill: currentColor; }
+.file__twisty--closed .file__chevron { transform: rotate(-90deg); }
 
 .file {
   display: flex;

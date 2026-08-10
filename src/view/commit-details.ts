@@ -1,8 +1,12 @@
 import { UNCOMMITTED } from "../data/repo.ts";
-import type { ChangedFile, CommitDetails, FileStatus } from "../data/repo.ts";
+import type { ChangedFile, CommitDetails } from "../data/repo.ts";
 import { absoluteTime, copyToClipboard, el, openExternal } from "./dom.ts";
 import { md5Hex } from "./md5.ts";
 import { openContextMenu } from "./context-menu.ts";
+import {
+  fileViewIcon, fileViewMode, renderFileView, setFileViewMode,
+} from "./file-tree.ts";
+import type { FileViewMode } from "./file-tree.ts";
 
 export interface DetailsHandlers {
   openDiff(file: ChangedFile): void;
@@ -12,6 +16,8 @@ export interface DetailsHandlers {
   /** Fired while the split divider is dragged, with a 0–1 fraction. */
   resize(fraction: number): void;
   resizeEnd(): void;
+  /** The user switched the changed files between tree and list. */
+  fileViewChanged(mode: FileViewMode): void;
 }
 
 export interface ParsedMessage {
@@ -52,10 +58,6 @@ export function splitMessage(raw: string): ParsedMessage {
   }
   return { subject, body: kept.join("\n").trim(), coAuthors, claudeSessions };
 }
-
-const STATUS_LABEL: Record<FileStatus, string> = {
-  A: "Added", M: "Modified", D: "Deleted", R: "Renamed", C: "Copied", U: "Conflicted", "?": "Untracked",
-};
 
 /**
  * Two panes side by side when there is room — summary on the left, changed files on
@@ -146,6 +148,22 @@ export function renderCommitDetails(
   }
 
   const filesPane = el("div", "details__files");
+  const fileList = el("div", "details__filelist");
+  // Collapsed folders are remembered per commit, and a comparison is its own
+  // pair of endpoints rather than either commit.
+  const fileKey = comparison !== null
+    ? `${comparison.from}..${comparison.to}`
+    : details.hash;
+
+  const drawFiles = (): void => {
+    fileList.replaceChildren();
+    if (details.files.length === 0) {
+      fileList.appendChild(el("div", "details__empty", filesNote ?? "No file changes."));
+      return;
+    }
+    renderFileView(fileList, details.files, handlers, fileKey);
+  };
+
   if (filesNote === undefined || details.files.length > 0) {
     // Mirrors the file-row grid: count in the status-badge column, label in the
     // filename column.
@@ -155,12 +173,11 @@ export function renderCommitDetails(
       el("span", "details__filecount-label",
         `file${details.files.length === 1 ? "" : "s"} changed`),
     );
+    count.appendChild(fileViewToggle(handlers, drawFiles));
     filesPane.appendChild(count);
   }
-  if (details.files.length === 0) {
-    filesPane.appendChild(el("div", "details__empty", filesNote ?? "No file changes."));
-  }
-  for (const file of details.files) filesPane.appendChild(fileRow(file, handlers));
+  drawFiles();
+  filesPane.appendChild(fileList);
 
   const divider = el("div", "details__divider");
   divider.title = "Drag to resize";
@@ -196,39 +213,36 @@ function attachDivider(divider: HTMLElement, handlers: DetailsHandlers): void {
   });
 }
 
-function fileRow(file: ChangedFile, handlers: DetailsHandlers): HTMLElement {
-  const row = el("button", "file");
-  row.title = file.oldPath ? `${file.oldPath} → ${file.path}` : file.path;
+/**
+ * Tree and list, as two buttons rather than one that flips: which shape the
+ * pane is in is then readable without clicking, the way git-graph's pair is.
+ */
+function fileViewToggle(handlers: DetailsHandlers, redraw: () => void): HTMLElement {
+  const group = el("span", "fileview");
+  const buttons = new Map<FileViewMode, HTMLElement>();
 
-  const badge = el("span", `file__status file__status--${file.status}`, file.status);
-  badge.title = STATUS_LABEL[file.status] ?? file.status;
+  const choose = (mode: FileViewMode): void => {
+    if (fileViewMode() === mode) return;
+    setFileViewMode(mode);
+    for (const [each, button] of buttons) {
+      button.classList.toggle("fileview__btn--on", each === mode);
+    }
+    redraw();
+    handlers.fileViewChanged(mode);
+  };
 
-  const segments = file.path.split("/");
-  const name = segments.pop() ?? file.path;
-  const dir = segments.join("/");
-
-  const text = el("span", "file__text");
-  text.appendChild(el("span", "file__name", name));
-  if (dir !== "") text.appendChild(el("span", "file__dir", dir));
-  row.append(badge, text);
-  if (file.additions !== undefined || file.deletions !== undefined) {
-    const stats = el("span", "file__stats");
-    stats.append(
-      el("span", "file__add", `+${file.additions ?? 0}`),
-      el("span", "file__del", `−${file.deletions ?? 0}`),
-    );
-    row.appendChild(stats);
+  for (const [mode, title] of [
+    ["tree", "File Tree View"], ["list", "File List View"],
+  ] as const) {
+    const button = el("button", "fileview__btn");
+    button.title = title;
+    button.classList.toggle("fileview__btn--on", fileViewMode() === mode);
+    button.appendChild(fileViewIcon(mode));
+    button.addEventListener("click", () => choose(mode));
+    buttons.set(mode, button);
+    group.appendChild(button);
   }
-
-  row.addEventListener("click", () => handlers.openDiff(file));
-  row.addEventListener("contextmenu", (event) => {
-    event.preventDefault();
-    openContextMenu(event.clientX, event.clientY, [
-      { label: "View Diff", run: () => handlers.openDiff(file) },
-      { label: "Copy File Path to Clipboard", run: () => copyToClipboard(file.path) },
-    ]);
-  });
-  return row;
+  return group;
 }
 
 /** A Claude-Session URL renders as a named link; the URL itself lives in the

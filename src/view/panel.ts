@@ -9,6 +9,8 @@ import type { ActionContext } from "../actions/menus.ts";
 import { closeContextMenu, openContextMenu } from "./context-menu.ts";
 import { confirmDialog } from "./dialog.ts";
 import { renderCommitDetails } from "./commit-details.ts";
+import { setFileViewMode } from "./file-tree.ts";
+import type { FileViewMode } from "./file-tree.ts";
 import { renderGraph } from "./render-graph.ts";
 import { VirtualRows } from "./virtual-rows.ts";
 import { FindWidget } from "./find-widget.ts";
@@ -105,7 +107,8 @@ export class Panel {
   async start(): Promise<void> {
     // Restores run first so the find bar is built with the user's last toggles
     // rather than being retrofitted with them a frame later.
-    await Promise.all([this.restoreSplit(), this.restoreDetailsCache(), this.restoreFindOptions()]);
+    await Promise.all([this.restoreSplit(), this.restoreDetailsCache(), this.restoreFindOptions(),
+      this.restoreFileView()]);
     this.build();
     await this.reload();
     this.subscribe();
@@ -119,6 +122,13 @@ export class Panel {
       }
     } catch { /* first run */ }
     this.detailsHost.style.setProperty("--cdv-split", `${(this.splitFraction * 100).toFixed(2)}%`);
+  }
+
+  private async restoreFileView(): Promise<void> {
+    try {
+      const stored = await globalThis.muxy?.storage.get("details.fileView");
+      if (stored === "tree" || stored === "list") setFileViewMode(stored);
+    } catch { /* first run */ }
   }
 
   private async restoreFindOptions(): Promise<void> {
@@ -865,6 +875,9 @@ export class Panel {
       },
       resizeEnd: () => {
         void globalThis.muxy?.storage.set("details.split", this.splitFraction).catch(() => undefined);
+      },
+      fileViewChanged: (mode: FileViewMode) => {
+        void globalThis.muxy?.storage.set("details.fileView", mode).catch(() => undefined);
       },
     };
   }
