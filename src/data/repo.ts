@@ -866,21 +866,24 @@ async function uncommittedDetails(): Promise<CommitDetails> {
   const countsByPath = new Map<string, { additions: number; deletions: number }>();
   for (const line of (numstatOut ?? "").split("\n")) {
     const m = /^(\d+)\t(\d+)\t(.+)$/.exec(line);
-    if (m) countsByPath.set(m[3], { additions: Number(m[1]), deletions: Number(m[2]) });
+    if (m) countsByPath.set(unquotePath(m[3]), { additions: Number(m[1]), deletions: Number(m[2]) });
   }
   const files: ChangedFile[] = [];
   for (const line of out.split("\n")) {
     if (line.trim() === "") continue;
     const code = line.slice(0, 2);
+    // Porcelain quotes unusual paths exactly as `--raw` does.
     const rest = line.slice(3);
     if (code.includes("?")) {
-      files.push({ path: rest, status: "?" });
+      files.push({ path: unquotePath(rest), status: "?" });
     } else if (code.trimStart().startsWith("R")) {
-      const [oldPath, path] = rest.split(" -> ");
-      files.push({ path, oldPath, status: "R", ...countsByPath.get(path) });
+      const [from, to] = rest.split(" -> ");
+      const path = unquotePath(to ?? "");
+      files.push({ path, oldPath: unquotePath(from), status: "R", ...countsByPath.get(path) });
     } else {
       const letter = (code.replace(/\s/g, "")[0] ?? "M") as FileStatus;
-      files.push({ path: rest, status: letter, ...countsByPath.get(rest) });
+      const path = unquotePath(rest);
+      files.push({ path, status: letter, ...countsByPath.get(path) });
     }
   }
   return {
@@ -917,6 +920,42 @@ export async function comparisonFiles(from: string, to: string): Promise<Changed
   return parseRawNumstat(out);
 }
 
+const C_ESCAPES: Record<string, string> = {
+  a: "\x07", b: "\b", f: "\f", n: "\n", r: "\r", t: "\t", v: "\v", "\\": "\\", '"': '"',
+};
+
+/**
+ * git prints any path holding an unusual byte — anything non-ASCII, a quote, a
+ * control character — in C-quoted form: `"src/\344\270\255.ts"`. That string is
+ * not a path. Handed back as a pathspec it matches nothing, which is why a file
+ * with a non-English name listed in the details pane and then opened as an empty
+ * diff. The octal escapes are bytes, not characters, so they are collected and
+ * decoded as UTF-8 together rather than one at a time.
+ */
+function unquotePath(value: string): string {
+  if (value.length < 2 || !value.startsWith(`"`) || !value.endsWith(`"`)) return value;
+  const body = value.slice(1, -1);
+  const encoder = new TextEncoder();
+  const bytes: number[] = [];
+  for (let index = 0; index < body.length; index++) {
+    const char = body[index];
+    if (char !== "\\") {
+      bytes.push(...encoder.encode(char));
+      continue;
+    }
+    const escape = body[++index];
+    if (escape === undefined) break;
+    const octal = body.slice(index, index + 3);
+    if (/^[0-7]{3}$/.test(octal)) {
+      bytes.push(parseInt(octal, 8));
+      index += 2;
+      continue;
+    }
+    bytes.push(...encoder.encode(C_ESCAPES[escape] ?? escape));
+  }
+  return new TextDecoder().decode(new Uint8Array(bytes));
+}
+
 /**
  * `--raw --numstat` emit in one invocation — one round trip — with the raw
  * records first and the numstat lines after, in the same file order. Counts are
@@ -932,9 +971,9 @@ function parseRawNumstat(out: string): ChangedFile[] {
       const [meta, ...paths] = line.split("\t");
       const code = (meta.split(" ").pop() ?? "M")[0] as FileStatus;
       if ((code === "R" || code === "C") && paths.length >= 2) {
-        files.push({ status: code, oldPath: paths[0], path: paths[1] });
+        files.push({ status: code, oldPath: unquotePath(paths[0]), path: unquotePath(paths[1]) });
       } else {
-        files.push({ status: code, path: paths[0] ?? "" });
+        files.push({ status: code, path: unquotePath(paths[0] ?? "") });
       }
       continue;
     }

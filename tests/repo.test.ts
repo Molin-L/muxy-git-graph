@@ -15,6 +15,9 @@ import { execFileSync } from "node:child_process";
 
 let dir = "";
 
+/** Non-ASCII and a space: both make git quote the path in `--raw` and porcelain. */
+const NON_ASCII = "中文 文件.txt";
+
 function git(...args: string[]): string {
   return execFileSync("git", args, { cwd: dir, encoding: "utf8" });
 }
@@ -49,6 +52,11 @@ before(() => {
   git("mv", "c.txt", "renamed.txt");
   git("commit", "-m", "rename c to renamed");
 
+  // git C-quotes this path in every listing it prints, so the whole round trip —
+  // list the file, then diff it by that path — has to survive the quoting.
+  write(NON_ASCII, "内容\n");
+  git("add", "."); git("commit", "-m", "add a file with a non-English name");
+
   // A stash.
   write("a.txt", "one\ntwo\nstashed\n");
   git("stash", "push", "-m", "work in progress");
@@ -56,6 +64,9 @@ before(() => {
   // Leave the tree dirty, so the uncommitted row appears.
   write("a.txt", "one\ntwo\ndirty\n");
   write("untracked.txt", "new\n");
+  // Porcelain quotes this one too, and an untracked file is the path the diff
+  // tab has to open without a commit to anchor it.
+  write(`untracked ${NON_ASCII}`, "新\n");
 
   // The panel calls muxy.exec with no cwd; Muxy scopes it to the worktree.
   (globalThis as Record<string, unknown>).muxy = {
@@ -167,7 +178,8 @@ test("uncommitted details list modified and untracked files", async () => {
   const repo = await import("../src/data/repo.ts");
   const details = await repo.commitDetails("*");
   const paths = details.files.map((f) => f.path).sort();
-  assert.deepEqual(paths, ["a.txt", "untracked.txt"]);
+  assert.deepEqual(paths, ["a.txt", "untracked.txt", `untracked ${NON_ASCII}`].sort(),
+    "quoted porcelain paths are decoded, not passed through");
   assert.equal(details.files.find((f) => f.path === "untracked.txt")?.status, "?");
   const modified = details.files.find((f) => f.path === "a.txt");
   assert.equal(modified?.status, "M");
@@ -189,6 +201,23 @@ test("fileDiff returns a patch that the diff parser understands", async () => {
   assert.equal(files[0].additions, 1);
   assert.equal(files[0].deletions, 0);
   assert.ok(files[0].rows.some((r) => r.kind === "addition" && r.text === "two"));
+});
+
+test("a non-English path survives the trip out to git and back", async () => {
+  const repo = await import("../src/data/repo.ts");
+  const { parseUnifiedDiff } = await import("../src/diff/parse.ts");
+  const state = await repo.loadCommits(100);
+  const commit = state.commits.find((c) => c.subject.startsWith("add a file with"))!;
+
+  const details = await repo.commitDetails(commit.hash);
+  assert.deepEqual(details.files.map((f) => f.path), [NON_ASCII],
+    "the listed path is the real one, not git's C-quoted rendering of it");
+
+  // The bug this guards: the quoted form lists fine and then matches no file, so
+  // the diff tab opened empty.
+  const files = parseUnifiedDiff(await repo.fileDiff(commit.hash, details.files[0].path));
+  assert.equal(files.length, 1, "the path git printed is a path git accepts back");
+  assert.ok(files[0].rows.some((r) => r.kind === "addition" && r.text === "内容"));
 });
 
 test("a patch with no hunks says what happened instead of looking empty", async () => {
@@ -232,7 +261,7 @@ test("comparisonFiles diffs two commits", async () => {
 
   const files = await repo.comparisonFiles(first.hash, head.hash);
   const paths = files.map((f) => f.path).sort();
-  assert.deepEqual(paths, ["a.txt", "b.txt", "renamed.txt"]);
+  assert.deepEqual(paths, ["a.txt", "b.txt", "renamed.txt", NON_ASCII].sort());
 });
 
 test("pendingOperation reports null on a clean tree and detects a conflict", async () => {
