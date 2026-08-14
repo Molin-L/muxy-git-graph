@@ -2,7 +2,7 @@ import "../styles/global.css";
 import "./diff.css";
 import * as log from "../log.ts";
 import { comparisonDiff, fileDiff } from "../data/repo.ts";
-import { parseUnifiedDiff, toSplitRows } from "./parse.ts";
+import { noHunkSummary, parseUnifiedDiff, toSplitRows } from "./parse.ts";
 import type { DiffFile, DiffRow } from "./parse.ts";
 import { el } from "../view/dom.ts";
 
@@ -41,7 +41,10 @@ async function start(host: HTMLElement): Promise<void> {
   const draw = (): void => {
     toggle.textContent = style === "split" ? "Unified" : "Split";
     body.replaceChildren();
-    if (files.length === 0 || files.every((f) => f.rows.length === 0)) {
+    // Only a patch with no files at all is nothing to show. A file with no hunks
+    // still changed — renamed, chmodded, a binary rewritten — and renderFile says
+    // which, rather than the tab claiming the commit did not touch it.
+    if (files.length === 0) {
       body.appendChild(el("div", "diff__empty", "No changes to show for this file."));
       return;
     }
@@ -117,6 +120,11 @@ function renderFile(file: DiffFile, style: Style): HTMLElement {
 
   if (file.isBinary) {
     wrapper.appendChild(el("div", "diff__empty", "Binary file not shown."));
+    return wrapper;
+  }
+
+  if (file.rows.length === 0) {
+    wrapper.appendChild(el("div", "diff__empty", noHunkSummary(file)));
     return wrapper;
   }
 

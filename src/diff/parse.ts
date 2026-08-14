@@ -14,6 +14,12 @@ export interface DiffFile {
   readonly additions: number;
   readonly deletions: number;
   readonly rows: readonly DiffRow[];
+  /**
+   * The `old mode` / `rename from` / `new file mode` lines git prints above the
+   * hunks. Kept because a patch can have no hunks at all — a pure rename, a mode
+   * change, an empty new file — and those lines are then the whole story.
+   */
+  readonly headers: readonly string[];
 }
 
 const HUNK = /^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@/;
@@ -25,6 +31,7 @@ export function parseUnifiedDiff(patch: string): DiffFile[] {
   let oldPath: string | null = null;
   let isBinary = false;
   let rows: DiffRow[] = [];
+  let headers: string[] = [];
   let additions = 0;
   let deletions = 0;
   let oldLine = 0;
@@ -32,11 +39,12 @@ export function parseUnifiedDiff(patch: string): DiffFile[] {
 
   const flush = (): void => {
     if (path === null) return;
-    files.push({ path, oldPath, isBinary, additions, deletions, rows });
+    files.push({ path, oldPath, isBinary, additions, deletions, rows, headers });
     path = null;
     oldPath = null;
     isBinary = false;
     rows = [];
+    headers = [];
     additions = 0;
     deletions = 0;
   };
@@ -59,13 +67,14 @@ export function parseUnifiedDiff(patch: string): DiffFile[] {
       isBinary = true;
       continue;
     }
+    if (line.startsWith("index ") || line.startsWith("--- ") || line.startsWith("+++ ")) continue;
     if (
-      line.startsWith("index ") || line.startsWith("--- ") || line.startsWith("+++ ") ||
       line.startsWith("new file mode") || line.startsWith("deleted file mode") ||
       line.startsWith("old mode") || line.startsWith("new mode") ||
       line.startsWith("similarity index") || line.startsWith("rename from") ||
       line.startsWith("rename to") || line.startsWith("copy from") || line.startsWith("copy to")
     ) {
+      headers.push(line);
       continue;
     }
 
@@ -102,6 +111,28 @@ export function parseUnifiedDiff(patch: string): DiffFile[] {
 
   flush();
   return files;
+}
+
+/**
+ * What a file with no hunks actually did. git says it in the header lines it
+ * prints instead of a patch, so this reads them back out; the modes are quoted
+ * verbatim because "100755 → 100644" is the useful part of a chmod.
+ */
+export function noHunkSummary(file: DiffFile): string {
+  const has = (prefix: string): string | undefined =>
+    file.headers.find((h) => h.startsWith(prefix));
+  if (has("new file mode")) return "New empty file.";
+  if (has("deleted file mode")) return "Deleted an empty file.";
+
+  const parts: string[] = [];
+  if (has("rename from")) parts.push("Renamed, with no line changes.");
+  else if (has("copy from")) parts.push("Copied, with no line changes.");
+
+  const oldMode = has("old mode")?.split(" ").pop();
+  const newMode = has("new mode")?.split(" ").pop();
+  if (oldMode && newMode) parts.push(`Mode changed ${oldMode} → ${newMode}.`);
+
+  return parts.length === 0 ? "No line changes in this file." : parts.join(" ");
 }
 
 export interface SplitRow {

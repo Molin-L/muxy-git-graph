@@ -191,6 +191,30 @@ test("fileDiff returns a patch that the diff parser understands", async () => {
   assert.ok(files[0].rows.some((r) => r.kind === "addition" && r.text === "two"));
 });
 
+test("a patch with no hunks says what happened instead of looking empty", async () => {
+  const repo = await import("../src/data/repo.ts");
+  const { parseUnifiedDiff, noHunkSummary } = await import("../src/diff/parse.ts");
+  const state = await repo.loadCommits(100);
+  const rename = state.commits.find((c) => c.subject === "rename c to renamed")!;
+
+  // A pure rename produces headers and not one hunk, which the viewer used to
+  // read as "No changes to show for this file."
+  const patch = await repo.fileDiff(rename.hash, "renamed.txt", "c.txt");
+  const files = parseUnifiedDiff(patch);
+  assert.equal(files.length, 1);
+  assert.equal(files[0].rows.length, 0, "a 100% rename has no hunks");
+  assert.equal(noHunkSummary(files[0]), "Renamed, with no line changes.");
+
+  assert.equal(
+    noHunkSummary(parseUnifiedDiff(
+      "diff --git a/run.sh b/run.sh\nold mode 100755\nnew mode 100644\n")[0]),
+    "Mode changed 100755 → 100644.");
+  assert.equal(
+    noHunkSummary(parseUnifiedDiff(
+      "diff --git a/empty b/empty\nnew file mode 100644\nindex 000..000\n")[0]),
+    "New empty file.");
+});
+
 test("fileDiff handles untracked files in the working tree", async () => {
   const repo = await import("../src/data/repo.ts");
   const { parseUnifiedDiff } = await import("../src/diff/parse.ts");
