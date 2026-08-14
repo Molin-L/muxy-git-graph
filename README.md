@@ -24,7 +24,10 @@ supported.
   committer, date, parents, message body, and the list of changed files. The graph
   stretches around the expansion.
 - **Click a file** to open its diff in a tab, with a unified/split toggle.
-- **⌘/Ctrl-click a second commit** to compare the two.
+- **⌘/Ctrl-click two commits** to compare them. The first click only marks its
+  row — nothing expands, since one end of a range has nothing to show — and the
+  second opens the changed files across the pair beneath it. With a commit already
+  expanded, a single ⌘/Ctrl-click compares against it.
 - **Right-click a commit** for Add Tag, Create Branch, Checkout, Cherry Pick,
   Revert, Drop, Merge, Rebase, Reset, and copy actions — with Cherry Pick and Drop
   correctly disabled on merge commits.

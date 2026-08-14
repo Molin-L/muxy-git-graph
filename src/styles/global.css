@@ -374,7 +374,13 @@ select, input[type="text"] {
 
 .row:hover { background: var(--muxy-hover); }
 .row--selected { background: var(--muxy-hover); box-shadow: inset 2px 0 0 var(--muxy-accent); }
-.row--compare { background: var(--muxy-accent-soft); }
+/* An end of a comparison. It carries the selected row's marker because after the
+   first ⌘-click it is the only thing on screen saying the click landed, and a
+   tint alone reads as hover. */
+.row--compare {
+  background: var(--muxy-accent-soft);
+  box-shadow: inset 2px 0 0 var(--muxy-accent);
+}
 .row--head .row__subject { font-weight: 600; }
 
 /* The current find match. Marks the row without claiming selection — stepping

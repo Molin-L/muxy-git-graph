@@ -10,6 +10,7 @@ import type { ActionContext } from "../actions/menus.ts";
 import { closeContextMenu, openContextMenu } from "./context-menu.ts";
 import { confirmDialog } from "./dialog.ts";
 import { renderCommitDetails } from "./commit-details.ts";
+import { nextComparison } from "./compare-selection.ts";
 import { setFileViewMode } from "./file-tree.ts";
 import type { FileViewMode } from "./file-tree.ts";
 import { renderGraph } from "./render-graph.ts";
@@ -944,13 +945,46 @@ export class Panel {
     }
   }
 
+  /**
+   * Cmd-click is a two-step gesture. The first one, with nothing expanded, only
+   * marks an end: the row highlights and no pane opens, because a comparison
+   * needs two commits and expanding the details of one of them says nothing about
+   * the range. The second Cmd-click picks the other end, and the pane opens under
+   * the commit just clicked with the diff across the pair.
+   *
+   * With a commit already expanded, one Cmd-click is enough — that row is
+   * already an end — which is the gesture this panel has always had.
+   */
   private async selectComparison(index: number): Promise<void> {
-    if (this.selected === null || this.selected === index) return;
-    this.compareWith = index;
+    const step = nextComparison(
+      { selected: this.selected, compareWith: this.compareWith }, index);
+
+    if (!step.load) {
+      this.compareWith = step.compareWith;
+      this.rows?.refresh();
+      // The armed row is the only thing on screen that changed, so the status bar
+      // says what it is waiting for rather than leaving a lone highlight.
+      if (step.selected === null && step.compareWith !== null) {
+        const hash = this.state.commits[index].hash;
+        this.flashStatus(hash === UNCOMMITTED
+          ? "Comparing from the working tree — ⌘-click another commit"
+          : `Comparing from ${hash.slice(0, 8)} — ⌘-click another commit`);
+      }
+      return;
+    }
+
+    this.selected = step.selected;
+    this.compareWith = step.compareWith;
+    if (step.expanded) {
+      this.selectedHash = this.state.commits[step.selected].hash;
+      // Opens the gap under the clicked row that the pane sits in.
+      this.render();
+    }
     this.rows?.refresh();
 
-    const from = this.state.commits[Math.max(this.selected, index)];
-    const to = this.state.commits[Math.min(this.selected, index)];
+    const ends = [step.selected, step.compareWith];
+    const from = this.state.commits[Math.max(...ends)];
+    const to = this.state.commits[Math.min(...ends)];
     const token = ++this.detailsToken;
     const handlers = this.detailsHandlers(to.hash, { from: from.hash, to: to.hash });
     const comparison = { from: from.hash, to: to.hash };
@@ -1320,7 +1354,9 @@ export class Panel {
       closeContextMenu();
       // Innermost first: an active search is discarded before the details pane,
       // so one Escape never dismisses both.
-      if (this.find?.clear() !== true && this.selected !== null) this.closeDetails();
+      if (this.find?.clear() !== true && (this.selected !== null || this.compareWith !== null)) {
+        this.closeDetails();
+      }
       return;
     }
     if (meta && is("f")) {
