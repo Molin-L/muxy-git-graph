@@ -135,12 +135,15 @@ const EXEC_TIMEOUT_MS = 30_000;
  * - `background` — relayed to `background.js` over the extension event channel.
  *   Webview exec always spawns on the machine running Muxy, but the background
  *   context is the one Muxy documents as running exec on the remote server for a
- *   remote SSH workspace. See docs/adr/0017-background-exec-relay.md.
+ *   remote SSH workspace. The settled transport stores the repository root, and
+ *   every command is wrapped with `cd <path> &&` so the one shared background
+ *   host cannot pick up Muxy's currently active workspace. See
+ *   docs/adr/0017-background-exec-relay.md.
  */
 type Transport =
   | { kind: "direct" }
   | { kind: "shellCwd"; path: string }
-  | { kind: "background" };
+  | { kind: "background"; path: string };
 
 let transportMode: Transport = { kind: "direct" };
 
@@ -198,9 +201,24 @@ function exec(command: string[] | { shell: string }): Promise<ExecResult> {
   });
 }
 
+/** `cd <path> && …` — same wrapping `shellCwd` uses, so a shared host cannot
+ *  execute against whichever workspace Muxy currently has active. */
+function bindToRepo(command: string[] | { shell: string }, path: string): { shell: string } {
+  return {
+    shell: Array.isArray(command)
+      ? remote.shellCommand(command, path)
+      : remote.shellScript(command.shell, path),
+  };
+}
+
 function execOnce(command: string[] | { shell: string }): Promise<ExecResult> {
   // The relay owns its own timeout and correlation; nothing below applies to it.
-  if (transportMode.kind === "background") return execViaBackground(command);
+  // The command itself is always bound to the root the probe resolved: request
+  // ids already correlated correctly, but a bare `git log` would run in the
+  // host's ambient workspace.
+  if (transportMode.kind === "background") {
+    return execViaBackground(bindToRepo(command, transportMode.path));
+  }
 
   const label = Array.isArray(command) ? command.join(" ") : command.shell;
   const sent = transport(command);
@@ -484,9 +502,18 @@ async function runProbe(): Promise<boolean> {
 
   // 3. Relay through background.js, whose exec Muxy documents as running on the
   //    remote server for a remote SSH workspace — the one context that can reach
-  //    a worktree the webview's local spawn cannot.
-  transportMode = { kind: "background" };
-  if (await backgroundReachesRepo(root)) return settle({ kind: "background" });
+  //    a worktree the webview's local spawn cannot. The root is required: without
+  //    it there is nothing to pin subsequent commands to, and a shared host
+  //    would silently follow Muxy's active workspace.
+  if (root === null) {
+    recordAttempt({
+      rung: "background", sent: "(skipped)", ok: false,
+      detail: "muxy.git.repoInfo() returned no root path, so there was nothing to pin the relay to",
+    });
+  } else {
+    transportMode = { kind: "background", path: root };
+    if (await backgroundReachesRepo(root)) return settle({ kind: "background", path: root });
+  }
 
   // Nothing can run git here. `muxy.git` follows the workspace, so that becomes
   // the read-only source.
@@ -501,11 +528,13 @@ async function runProbe(): Promise<boolean> {
 /**
  * The background probe must prove more than "a git ran": if the background host
  * were to spawn locally in some directory that happens to be a repository, its
- * answers would silently describe the wrong repo. `--show-toplevel` has to match
- * the root `muxy.git` reports for the active workspace.
+ * answers would silently describe the wrong repo. The command itself is already
+ * wrapped with `cd <root>` (see `bindToRepo`); `--show-toplevel` then has to
+ * match the root `muxy.git` reports, so a `cd` that was ignored still cannot
+ * settle on the wrong repository.
  */
-async function backgroundReachesRepo(root: string | null): Promise<boolean> {
-  const sent = "git rev-parse --show-toplevel (via background.js)";
+async function backgroundReachesRepo(root: string): Promise<boolean> {
+  const sent = `${remote.shellCommand(["git", "rev-parse", "--show-toplevel"], root)} (via background.js)`;
   try {
     const res = await exec(["git", "rev-parse", "--show-toplevel"]);
     const toplevel = res.stdout.trim();
@@ -517,7 +546,7 @@ async function backgroundReachesRepo(root: string | null): Promise<boolean> {
       return false;
     }
     const trim = (p: string): string => p.replace(/\/+$/, "");
-    if (root !== null && trim(toplevel) !== trim(root)) {
+    if (trim(toplevel) !== trim(root)) {
       recordAttempt({
         rung: "background", sent, ok: false,
         detail: `reached ${toplevel}, but the active workspace is ${root} — refusing to show the wrong repository`,
@@ -1006,7 +1035,9 @@ export async function fileDiff(hash: string, path: string, oldPath?: string): Pr
     const tracked = await tryRun(["git", "diff", "HEAD", "--no-color", "-M", ...paths]);
     if (tracked && tracked.trim() !== "") return tracked;
     // `--no-index` exits 1 whenever the files differ, which is the normal case here.
-    const res = await api().exec(["git", "diff", "--no-index", "--no-color", "/dev/null", path]);
+    // Through `exec`, not `api().exec`: on a remote workspace the untracked-file
+    // diff has to ride the same pinned transport as every other read.
+    const res = await exec(["git", "diff", "--no-index", "--no-color", "/dev/null", path]);
     return res.exitCode <= 1 ? res.stdout : "";
   }
   // Same first-parent reading as `changedFiles`, so a file listed under a merge

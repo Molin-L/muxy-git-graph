@@ -27,6 +27,15 @@ exec through a shell, for local paths the spawn cwd cannot resolve), `background
 workspace. Without that check, a background exec that happened to land in some
 local repository would silently render the wrong project's history.
 
+The probe is not enough on its own. All Git Graph surfaces share one background
+extension host, and Muxy's background `exec` runs in the *currently active*
+workspace. A panel that verified `/home/dev/projects/a` would then send bare
+`git log` commands; if the user switched to `/home/dev/projects/b`, those
+commands would silently read `b` and the panel would cache `b`'s history under
+`a`'s key. Request correlation was never the bug — missing repository binding
+was. So the settled `background` transport stores the resolved root, and every
+relayed command is `cd <root> && …`, the same wrapping `shellCwd` already uses.
+
 ## Consequences
 
 - On a workspace where the relay works, **everything** works — per-commit file

@@ -629,23 +629,26 @@ test("remote workspace: the ladder lands on the background relay and everything 
 
   // The relay: answered by a pretend background whose exec runs on the remote.
   const handlers: Array<(p: unknown) => void> = [];
+  const seen: string[] = [];
   const remoteExec = (argv: string[] | { shell: string }): { stdout: string; stderr: string; exitCode: number } => {
     const joined = Array.isArray(argv) ? argv.join(" ") : argv.shell;
-    if (joined === "git rev-parse --show-toplevel") return { stdout: `${REMOTE_ROOT}\n`, stderr: "", exitCode: 0 };
-    if (joined.startsWith("git show --no-patch")) {
+    seen.push(joined);
+    const git = bareGit(joined);
+    if (git === "git rev-parse --show-toplevel") return { stdout: `${REMOTE_ROOT}\n`, stderr: "", exitCode: 0 };
+    if (git.startsWith("git show --no-patch")) {
       return {
         stdout: ["h", "p1 p2", "Remote User", "r@x", "2026-01-01", "Remote User", "r@x", "2026-01-01", "full body"].join(FLD),
         stderr: "", exitCode: 0,
       };
     }
-    if (joined.startsWith("git diff-tree")) {
+    if (git.startsWith("git diff-tree")) {
       return {
         stdout: ":100644 100644 abc1234 def5678 M\tsrc/app.ts\n1\t2\tsrc/app.ts\n",
         stderr: "", exitCode: 0,
       };
     }
-    if (joined.startsWith("git show --format=")) return { stdout: "diff --git a/src/app.ts b/src/app.ts\n@@ -1 +1 @@\n-a\n+b\n", stderr: "", exitCode: 0 };
-    if (joined.includes("MERGE_HEAD")) return { stdout: "", stderr: "", exitCode: 1 };
+    if (git.startsWith("git show --format=")) return { stdout: "diff --git a/src/app.ts b/src/app.ts\n@@ -1 +1 @@\n-a\n+b\n", stderr: "", exitCode: 0 };
+    if (git.includes("MERGE_HEAD")) return { stdout: "", stderr: "", exitCode: 1 };
     return { stdout: "", stderr: "", exitCode: 0 };
   };
   muxy.events = {
@@ -685,9 +688,17 @@ test("remote workspace: the ladder lands on the background relay and everything 
 
     assert.equal(await repo.pendingOperation(), null, "the shell probe rides the relay too");
 
+    assert.ok(seen.length > 0, "the relay ran");
+    for (const command of seen) {
+      assert.ok(command.startsWith(`cd '${REMOTE_ROOT}' && `),
+        `every relayed command must enter the resolved repo, got: ${command}`);
+    }
+
     const report = repo.probeReport();
     assert.deepEqual(report.map((a) => [a.rung, a.ok]),
       [["direct", false], ["shellCwd", false], ["background", true]]);
+    assert.match(report.find((a) => a.rung === "background")?.sent ?? "",
+      /cd '\/home\/dev\/projects\/gateway' && 'git' 'rev-parse' '--show-toplevel'/);
   } finally {
     muxy.exec = realExec;
     muxy.git = realGit;
@@ -695,6 +706,19 @@ test("remote workspace: the ladder lands on the background relay and everything 
     repo.resetCapabilities();
   }
 });
+
+/** Strips a leading `cd <path> && ` so matchers can look at the git argv. */
+function afterCd(command: string): string {
+  const sep = " && ";
+  const index = command.indexOf(sep);
+  return index === -1 ? command : command.slice(index + sep.length);
+}
+
+/** Unwrap POSIX single-quotes added by `shellCommand`, leaving a bare argv string.
+ *  Shell scripts (`shellScript`) are already unquoted and pass through. */
+function bareGit(command: string): string {
+  return afterCd(command).replace(/'((?:\\'|[^'])*)'/g, (_, inner: string) => inner.replace(/\\'/g, "'"));
+}
 
 test("a relay that reaches the wrong repository is refused", async () => {
   const repo = await import("../src/data/repo.ts");
@@ -732,6 +756,129 @@ test("a relay that reaches the wrong repository is refused", async () => {
     const background = repo.probeReport().find((a) => a.rung === "background");
     assert.ok(background && !background.ok);
     assert.match(background.detail, /wrong repository/);
+  } finally {
+    muxy.exec = realExec;
+    muxy.git = realGit;
+    (muxy as { events?: unknown }).events = realEvents;
+    repo.resetCapabilities();
+  }
+});
+
+test("background commands stay pinned when the host's ambient workspace changes", async () => {
+  const repo = await import("../src/data/repo.ts");
+  const muxy = (globalThis as Record<string, unknown>).muxy as Record<string, unknown>;
+  const realExec = muxy.exec;
+  const realGit = muxy.git;
+  const realEvents = (muxy as { events?: unknown }).events;
+  repo.resetCapabilities();
+
+  // The panel opened against dagster-codeserver. The shared background host later
+  // follows Muxy into gis-service. Bare git would silently read the latter.
+  const PANEL_ROOT = "/home/dev/projects/dagster-codeserver";
+  const AMBIENT_ROOT = "/home/dev/projects/gis-service";
+  const GRP = "\u001d";
+  const FLD = String.fromCharCode(0x1f);
+  const REC = String.fromCharCode(0x1e);
+  const seen: string[] = [];
+
+  muxy.exec = () => Promise.reject(new Error("exec failed to launch: spawn process: No such file or directory"));
+
+  const batch = (branch: string, subject: string, hash: string): string => [
+    "true",
+    hash,
+    branch,
+    [hash, "", "Dev", "d@x", "2026-01-01T00:00:00Z", `HEAD -> ${branch}`, subject].join(FLD) + REC,
+    "",
+    "",
+    "",
+    "",
+    "",
+  ].join(GRP);
+
+  const remoteExec = (argv: string[] | { shell: string }): { stdout: string; stderr: string; exitCode: number } => {
+    const joined = Array.isArray(argv) ? argv.join(" ") : argv.shell;
+    seen.push(joined);
+    const pinned = joined.startsWith(`cd '${PANEL_ROOT}' && `);
+    const git = bareGit(joined);
+    const root = pinned ? PANEL_ROOT : AMBIENT_ROOT;
+    const branch = pinned ? "codeserver" : "gis";
+    const subject = pinned ? "codeserver work" : "gis-service work";
+    const hash = pinned ? "c".repeat(40) : "g".repeat(40);
+
+    if (git === "git rev-parse --show-toplevel") {
+      return { stdout: `${root}\n`, stderr: "", exitCode: 0 };
+    }
+    if (git.includes("printf '\\035'") || git.includes("git log") || git.includes("for-each-ref")) {
+      return { stdout: batch(branch, subject, hash), stderr: "", exitCode: 0 };
+    }
+    if (git.startsWith("git show --no-patch")) {
+      return {
+        stdout: [hash, "", "Dev", "d@x", "2026-01-01", "Dev", "d@x", "2026-01-01", subject].join(FLD),
+        stderr: "", exitCode: 0,
+      };
+    }
+    if (git.startsWith("git diff-tree") || git.startsWith("git show --format=") || git.startsWith("git fetch")) {
+      return { stdout: pinned ? "ok\n" : "ambient\n", stderr: "", exitCode: 0 };
+    }
+    return { stdout: "", stderr: "", exitCode: 0 };
+  };
+
+  const handlers: Array<(p: unknown) => void> = [];
+  muxy.events = {
+    subscribe: (_c: string, h: (p: unknown) => void) => { handlers.push(h); return () => {}; },
+    emit: (_c: string, payload: unknown) => {
+      const p = payload as { kind?: string; id?: string; argv?: string[]; shell?: string };
+      if (p.kind === "exec" && p.id) {
+        const res = remoteExec(p.argv ?? { shell: p.shell ?? "" });
+        for (const h of [...handlers]) {
+          if (res.stdout) h({ kind: "exec-chunk", id: p.id, stream: "out", seq: 0, data: res.stdout });
+          if (res.stderr) h({ kind: "exec-chunk", id: p.id, stream: "err", seq: 0, data: res.stderr });
+          h({
+            kind: "exec-done", id: p.id, exitCode: res.exitCode,
+            outChunks: res.stdout ? 1 : 0, errChunks: res.stderr ? 1 : 0,
+          });
+        }
+      }
+      return Promise.resolve();
+    },
+  };
+  muxy.git = {
+    repoInfo: () => Promise.resolve({ root: PANEL_ROOT, gitDir: "", isWorktree: false, currentBranch: "codeserver" }),
+    log: () => Promise.resolve([]),
+    status: () => Promise.resolve({ branch: "codeserver", stagedFiles: [], unstagedFiles: [] }),
+  };
+
+  try {
+    const snapshot = await repo.loadSnapshot(10);
+    assert.equal(repo.transportKind(), "background");
+    assert.equal(snapshot.state.headBranch, "codeserver");
+    assert.equal(snapshot.state.commits[0]?.subject, "codeserver work");
+    assert.equal(snapshot.state.head, "c".repeat(40));
+
+    // Host has now switched to gis-service. Polling, details, diffs and writes
+    // must still name dagster-codeserver — a bare `git log` would return
+    // gis-service and be stored under the codeserver cache key.
+    const digest = await repo.refDigest();
+    const details = await repo.commitDetails("c".repeat(40));
+    const patch = await repo.fileDiff("c".repeat(40), "src/app.ts");
+    await repo.write.fetch(false);
+
+    assert.notEqual(digest, "");
+    assert.equal(details.body, "codeserver work");
+    assert.equal(patch, "ok\n");
+
+    assert.ok(seen.length >= 5, `expected probe + load + poll + details + write, saw ${seen.length}`);
+    for (const command of seen) {
+      assert.ok(
+        command.startsWith(`cd '${PANEL_ROOT}' && `),
+        `command ran in the host's ambient workspace instead of the panel's repo:\n${command}`,
+      );
+      assert.equal(
+        command.includes(AMBIENT_ROOT),
+        false,
+        `gis-service leaked into a command pinned to dagster-codeserver:\n${command}`,
+      );
+    }
   } finally {
     muxy.exec = realExec;
     muxy.git = realGit;

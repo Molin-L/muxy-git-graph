@@ -122,9 +122,11 @@ Webview `muxy.exec` always spawns on the machine running Muxy, so it cannot reac
 remote worktree. The extension ships a `background.js` exec relay: the background
 context is the one Muxy documents as running exec on the remote server, and every
 git command rides it when the webview's own exec cannot reach the repository
-([ADR-0017](./docs/adr/0017-background-exec-relay.md)). If the relay cannot reach
-the right repository either, the panel degrades to read-only history via
-`muxy.git`, and the probe report is persisted to
+([ADR-0017](./docs/adr/0017-background-exec-relay.md)). Each relayed command is
+pinned to the repository the panel resolved (`cd <root> && …`), so a shared
+background host cannot contaminate one project's graph with another's. If the
+relay cannot reach the right repository either, the panel degrades to read-only
+history via `muxy.git`, and the probe report is persisted to
 `storage["diagnostics.lastProbe"]` for diagnosis.
 
 ## Not yet built
