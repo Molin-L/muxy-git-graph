@@ -906,9 +906,8 @@ async function uncommittedDetails(): Promise<CommitDetails> {
     if (code.includes("?")) {
       files.push({ path: unquotePath(rest), status: "?" });
     } else if (code.trimStart().startsWith("R")) {
-      const [from, to] = rest.split(" -> ");
-      const path = unquotePath(to ?? "");
-      files.push({ path, oldPath: unquotePath(from), status: "R", ...countsByPath.get(path) });
+      const { oldPath, path } = porcelainRename(rest);
+      files.push({ path, oldPath, status: "R", ...countsByPath.get(path) });
     } else {
       const letter = (code.replace(/\s/g, "")[0] ?? "M") as FileStatus;
       const path = unquotePath(rest);
@@ -983,6 +982,36 @@ function unquotePath(value: string): string {
     bytes.push(...encoder.encode(C_ESCAPES[escape] ?? escape));
   }
   return new TextDecoder().decode(new Uint8Array(bytes));
+}
+
+/**
+ * One porcelain path field. A quoted name is scanned for its closing quote so
+ * a ` -> ` inside it is not taken as the rename separator — git prints
+ * `R  "foo -> bar.txt" -> "baz -> qux.txt"`.
+ */
+function takePorcelainPath(line: string): { path: string; rest: string } {
+  if (line.startsWith(`"`)) {
+    for (let index = 1; index < line.length; index++) {
+      if (line[index] === "\\") {
+        index++;
+        continue;
+      }
+      if (line[index] === `"`) {
+        return { path: unquotePath(line.slice(0, index + 1)), rest: line.slice(index + 1) };
+      }
+    }
+    return { path: unquotePath(line), rest: "" };
+  }
+  const sep = line.indexOf(" -> ");
+  if (sep === -1) return { path: line, rest: "" };
+  return { path: line.slice(0, sep), rest: line.slice(sep) };
+}
+
+function porcelainRename(rest: string): { oldPath: string; path: string } {
+  const from = takePorcelainPath(rest);
+  const after = from.rest.startsWith(" -> ") ? from.rest.slice(4) : from.rest;
+  const to = takePorcelainPath(after);
+  return { oldPath: from.path, path: to.path };
 }
 
 /**

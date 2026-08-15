@@ -203,6 +203,34 @@ test("fileDiff returns a patch that the diff parser understands", async () => {
   assert.ok(files[0].rows.some((r) => r.kind === "addition" && r.text === "two"));
 });
 
+test("a porcelain rename whose names contain ' -> ' still lists both paths", async () => {
+  const repo = await import("../src/data/repo.ts");
+  const from = "foo -> bar.txt";
+  const to = "baz -> qux.txt";
+  const head = git("rev-parse", "HEAD").trim();
+  fs.writeFileSync(path.join(dir, from), "arrow\n");
+  git("add", from);
+  git("commit", "-m", "add a file whose name holds the porcelain separator");
+  git("mv", from, to);
+  try {
+    const details = await repo.commitDetails("*");
+    const renamed = details.files.find((f) => f.status === "R");
+    assert.equal(renamed?.oldPath, from,
+      "the old name is not the fragment between the first two arrows");
+    assert.equal(renamed?.path, to,
+      "the new name is not the fragment between the last two arrows");
+
+    const { parseUnifiedDiff } = await import("../src/diff/parse.ts");
+    const files = parseUnifiedDiff(await repo.fileDiff("*", to, from));
+    assert.equal(files.length, 1, "the listed pair is a pathspec git accepts back");
+  } finally {
+    git("reset", "--hard", head);
+    fs.writeFileSync(path.join(dir, "a.txt"), "one\ntwo\ndirty\n");
+    fs.writeFileSync(path.join(dir, "untracked.txt"), "new\n");
+    fs.writeFileSync(path.join(dir, `untracked ${NON_ASCII}`), "新\n");
+  }
+});
+
 test("a non-English path survives the trip out to git and back", async () => {
   const repo = await import("../src/data/repo.ts");
   const { parseUnifiedDiff } = await import("../src/diff/parse.ts");
@@ -820,6 +848,9 @@ test("background commands stay pinned when the host's ambient workspace changes"
     if (git.startsWith("git diff-tree") || git.startsWith("git show --format=") || git.startsWith("git fetch")) {
       return { stdout: pinned ? "ok\n" : "ambient\n", stderr: "", exitCode: 0 };
     }
+    if (git.startsWith("git diff --no-index")) {
+      return { stdout: pinned ? "untracked-ok\n" : "untracked-ambient\n", stderr: "", exitCode: 1 };
+    }
     return { stdout: "", stderr: "", exitCode: 0 };
   };
 
@@ -861,11 +892,19 @@ test("background commands stay pinned when the host's ambient workspace changes"
     const digest = await repo.refDigest();
     const details = await repo.commitDetails("c".repeat(40));
     const patch = await repo.fileDiff("c".repeat(40), "src/app.ts");
+    const untracked = await repo.fileDiff("*", "untracked.txt");
     await repo.write.fetch(false);
 
     assert.notEqual(digest, "");
     assert.equal(details.body, "codeserver work");
     assert.equal(patch, "ok\n");
+    assert.equal(untracked, "untracked-ok\n",
+      "untracked diffs ride the pinned exec, not webview-local api().exec");
+    assert.ok(
+      seen.some((command) =>
+        command.startsWith(`cd '${PANEL_ROOT}' && `) && bareGit(command).startsWith("git diff --no-index")),
+      "the --no-index fallback must itself be a relayed command",
+    );
 
     assert.ok(seen.length >= 5, `expected probe + load + poll + details + write, saw ${seen.length}`);
     for (const command of seen) {
