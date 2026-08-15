@@ -10,7 +10,7 @@ import type { ActionContext } from "../actions/menus.ts";
 import { closeContextMenu, openContextMenu } from "./context-menu.ts";
 import { confirmDialog } from "./dialog.ts";
 import { renderCommitDetails } from "./commit-details.ts";
-import { nextComparison } from "./compare-selection.ts";
+import { locateEnds, nextComparison } from "./compare-selection.ts";
 import { setFileViewMode } from "./file-tree.ts";
 import type { FileViewMode } from "./file-tree.ts";
 import { renderGraph } from "./render-graph.ts";
@@ -250,6 +250,7 @@ export class Panel {
     this.selected = null;
     this.compareWith = null;
     this.selectedHash = null;
+    this.compareWithHash = null;
     this.detailsHost.hidden = true;
     this.detailsHost.replaceChildren();
     // Author and date widths are a property of this repository's commits.
@@ -605,19 +606,20 @@ export class Panel {
     await this.reload();
   }
 
-  /** Keep the selection pinned to the same commit hash across a refresh. */
+  /** Keep both compare ends pinned to the same hashes across a refresh. */
   private reselect(): void {
-    if (this.selectedHash === null) return;
-    const index = this.state.commits.findIndex((c) => c.hash === this.selectedHash);
-    this.selected = index === -1 ? null : index;
+    const ends = locateEnds(this.state.commits, this.selectedHash, this.compareWithHash);
+    this.selected = ends.selected;
+    this.compareWith = ends.compareWith;
     if (this.selected === null) {
-      this.compareWith = null;
       this.selectedHash = null;
       this.detailsHost.hidden = true;
     }
+    if (this.compareWith === null) this.compareWithHash = null;
   }
 
   private selectedHash: string | null = null;
+  private compareWithHash: string | null = null;
 
   /**
    * A commit's hash is its content, so its details never change — a cache entry
@@ -904,6 +906,7 @@ export class Panel {
     }
     this.selected = index;
     this.compareWith = null;
+    this.compareWithHash = null;
     this.selectedHash = this.state.commits[index].hash;
     this.render();
     this.rows?.refresh();
@@ -961,6 +964,9 @@ export class Panel {
 
     if (!step.load) {
       this.compareWith = step.compareWith;
+      this.compareWithHash = step.compareWith === null
+        ? null
+        : this.state.commits[step.compareWith].hash;
       this.rows?.refresh();
       // The armed row is the only thing on screen that changed, so the status bar
       // says what it is waiting for rather than leaving a lone highlight.
@@ -975,6 +981,7 @@ export class Panel {
 
     this.selected = step.selected;
     this.compareWith = step.compareWith;
+    this.compareWithHash = this.state.commits[step.compareWith].hash;
     if (step.expanded) {
       this.selectedHash = this.state.commits[step.selected].hash;
       // Opens the gap under the clicked row that the pane sits in.
@@ -1144,6 +1151,7 @@ export class Panel {
     this.selected = null;
     this.compareWith = null;
     this.selectedHash = null;
+    this.compareWithHash = null;
     this.render();
     this.rows?.refresh();
   }

@@ -45,3 +45,21 @@ export function nextComparison(current: CompareSelection, index: number): Compar
     ? { load: true, expanded: true, selected: index, compareWith: anchor }
     : { load: true, expanded: false, selected: current.selected, compareWith: index };
 }
+
+/**
+ * Rows move when the feed does — an uncommitted row appearing or vanishing
+ * shifts every later index. Hashes do not, so a poll remaps the marker rather
+ * than leaving it on a neighbour.
+ */
+export function locateEnds(
+  commits: readonly { readonly hash: string }[],
+  selectedHash: string | null,
+  compareWithHash: string | null,
+): CompareSelection {
+  const at = (hash: string | null): number | null => {
+    if (hash === null) return null;
+    const index = commits.findIndex((commit) => commit.hash === hash);
+    return index === -1 ? null : index;
+  };
+  return { selected: at(selectedHash), compareWith: at(compareWithHash) };
+}

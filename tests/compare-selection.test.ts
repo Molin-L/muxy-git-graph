@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { nextComparison } from "../src/view/compare-selection.ts";
+import { locateEnds, nextComparison } from "../src/view/compare-selection.ts";
 import type { CompareSelection } from "../src/view/compare-selection.ts";
 
 /**
@@ -65,4 +65,28 @@ test("the ends are ordered by row, not by click order", () => {
   // Rows run newest-first, so the larger index is always the `from` of the diff.
   assert.deepEqual(ends(older), [4, 9]);
   assert.deepEqual(ends(newer), [4, 9]);
+});
+
+/**
+ * A poll that inserts or drops the uncommitted row (or a commit, or a stash)
+ * shifts every later index. The marker has to follow the hash, not the slot.
+ */
+const FEED = [{ hash: "*" }, { hash: "aaa" }, { hash: "bbb" }, { hash: "ccc" }];
+
+test("an armed row stays on its commit when a row is inserted above it", () => {
+  // No uncommitted row yet: bbb sat at index 1. Then * appears at 0.
+  assert.deepEqual(locateEnds(FEED, null, "bbb"), { selected: null, compareWith: 2 });
+});
+
+test("an armed row stays on its commit when a row above it disappears", () => {
+  assert.deepEqual(locateEnds(FEED.slice(1), null, "bbb"), { selected: null, compareWith: 1 });
+});
+
+test("both ends of an open comparison remap together", () => {
+  assert.deepEqual(locateEnds(FEED, "aaa", "ccc"), { selected: 1, compareWith: 3 });
+});
+
+test("an end whose commit left the feed is dropped, not pointed at a neighbour", () => {
+  assert.deepEqual(locateEnds(FEED, "aaa", "gone"), { selected: 1, compareWith: null });
+  assert.deepEqual(locateEnds(FEED, "gone", "bbb"), { selected: null, compareWith: 2 });
 });
