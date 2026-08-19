@@ -30,7 +30,9 @@ _Avoid_: label, decoration, badge
 A ref as drawn on a row. A local head whose remotes are at the same commit is one
 chip, not several: `origin │ main` names the remotes that agree with it and then
 the branch once, as `vscode-git-graph`'s `combineLocalAndRemoteBranchLabels` does.
-Each half acts on its own ref.
+Each half acts on its own ref. A remote's symbolic `HEAD` (`origin/HEAD`) is not a
+Ref Chip at all — it is dropped when the decoration is parsed, since it always
+repeats the branch it points at.
 _Avoid_: badge, tag, pill
 
 > Terminology note: `vscode-git-graph` calls a lane a `Branch` and Muxy's official

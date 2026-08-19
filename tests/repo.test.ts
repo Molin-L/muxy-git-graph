@@ -57,6 +57,11 @@ before(() => {
   write(NON_ASCII, "内容\n");
   git("add", "."); git("commit", "-m", "add a file with a non-English name");
 
+  // A remote-tracking branch and the symbolic ref `git clone` writes beside it.
+  // `git log` decorates both, so this is the shape the parser actually meets.
+  git("update-ref", "refs/remotes/origin/main", "HEAD");
+  git("symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/main");
+
   // A stash.
   write("a.txt", "one\ntwo\nstashed\n");
   git("stash", "push", "-m", "work in progress");
@@ -119,6 +124,13 @@ test("loadCommits returns the graph, refs, stash and uncommitted row", async () 
 
   const head = state.commits.find((c) => c.refs.some((r) => r.kind === "head" && r.name === "main"));
   assert.ok(head, "local branch ref is parsed");
+
+  const refNames = state.commits.flatMap((c) => c.refs.map((r) => r.name));
+  assert.ok(refNames.includes("origin/main"), "remote-tracking branch is parsed");
+  // `origin/HEAD` decorates the same commit as the branch it points at, so it
+  // could only ever draw a second chip saying what the first one already says.
+  assert.deepEqual(refNames.filter((name) => name.endsWith("/HEAD")), [],
+    "the remote's symbolic HEAD is dropped");
 
   for (const commit of state.commits) {
     if (commit.hash === "*") continue;

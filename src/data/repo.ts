@@ -666,7 +666,10 @@ function fromLogEntry(entry: {
     authorEmail: "",
     authorDate: entry.authorDate,
     subject: entry.subject,
-    refs: (entry.refs ?? []).map((ref) => ({ name: ref.name, kind: refKind(ref) })),
+    refs: (entry.refs ?? [])
+      .map((ref) => ({ name: ref.name, kind: refKind(ref) }))
+      // Dropped on this path too: muxy.git reports the same symbolic ref.
+      .filter((ref) => !(ref.kind === "remote" && isRemoteHead(ref.name))),
   };
 }
 
@@ -785,10 +788,24 @@ function parseRefs(decoration: string): Ref[] {
     if (name.startsWith("HEAD -> ")) name = name.slice(8);
     if (name === "HEAD") continue;
     if (name.startsWith("tag: ")) refs.push({ name: name.slice(5), kind: "tag" });
-    else if (name.includes("/")) refs.push({ name, kind: "remote" });
-    else refs.push({ name, kind: "head" });
+    else if (name.includes("/")) {
+      if (isRemoteHead(name)) continue;
+      refs.push({ name, kind: "remote" });
+    } else refs.push({ name, kind: "head" });
   }
   return refs;
+}
+
+/**
+ * `origin/HEAD` and friends — the symbolic ref `git clone` writes to record which
+ * branch the remote considers default. It is not a branch: it always sits on the
+ * same commit as the branch it points at, so it can only ever add a chip that
+ * repeats one already there. `vscode-git-graph` shows it, behind a setting
+ * (`repository.showRemoteHeads`) it defaults to on; a right panel has no width to
+ * spend on a duplicate, so it is dropped here instead.
+ */
+function isRemoteHead(name: string): boolean {
+  return name.endsWith("/HEAD");
 }
 
 function parseStashes(out: string): Commit[] {
