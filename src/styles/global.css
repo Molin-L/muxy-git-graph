@@ -429,7 +429,11 @@ select, input[type="text"] {
      it squeeze every chip down to its floor even when there is ample room. Long
      names are handled by max-width + ellipsis below; the count is capped in JS. */
   flex: 0 0 auto;
-  padding: 0 var(--s3);
+  display: inline-flex;
+  align-items: center;
+  /* The padding lives on the segments, so the divider between a branch and its
+     remote runs the full height of the chip. */
+  padding: 0;
   border-radius: var(--radius-chip);
   font-size: var(--font-caption);
   font-weight: 600;
@@ -437,10 +441,36 @@ select, input[type="text"] {
   white-space: nowrap;
   max-width: 120px;
   overflow: hidden;
-  text-overflow: ellipsis;
   cursor: pointer;
   background: var(--muxy-accent-soft);
   color: var(--muxy-accent);
+}
+
+/* A pushed branch is drawn `origin │ main`, so both halves of the chip have to be
+   able to give way; the name gives way first, being the longer of the two. */
+.ref__name, .ref__remote {
+  padding: 0 var(--s3);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ref__name { flex: 0 1 auto; min-width: 0; }
+
+/* Italic and lighter: it names the remote the branch is on, not a branch of its
+   own. The divider is solid rather than a tint so it holds up on every chip
+   colour. */
+.ref__remote {
+  flex: 0 0 auto;
+  border-right: 1px solid var(--muxy-border);
+  font-weight: 500;
+  font-style: italic;
+}
+
+/* Two targets in one chip, so the half under the cursor says which it is. */
+.ref--combined { max-width: 176px; }
+.ref--combined .ref__name:hover, .ref--combined .ref__remote:hover {
+  background: var(--muxy-hover);
 }
 
 /* Inset ring, not outline: the outline draws outside the chip and gets clipped

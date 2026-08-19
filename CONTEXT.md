@@ -26,6 +26,13 @@ _Avoid_: column, branch line, swimlane
 A name pointing at a commit — a local head, a remote-tracking branch, or a tag.
 _Avoid_: label, decoration, badge
 
+**Ref Chip**:
+A ref as drawn on a row. A local head whose remotes are at the same commit is one
+chip, not several: `origin │ main` names the remotes that agree with it and then
+the branch once, as `vscode-git-graph`'s `combineLocalAndRemoteBranchLabels` does.
+Each half acts on its own ref.
+_Avoid_: badge, tag, pill
+
 > Terminology note: `vscode-git-graph` calls a lane a `Branch` and Muxy's official
 > git extension calls it a `column`. Both are rejected here — `Branch` collides with
 > the git concept, and `column` collides with the graph view's *table* columns

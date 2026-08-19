@@ -31,7 +31,8 @@ supported.
 - **Right-click a commit** for Add Tag, Create Branch, Checkout, Cherry Pick,
   Revert, Drop, Merge, Rebase, Reset, and copy actions — with Cherry Pick and Drop
   correctly disabled on merge commits.
-- **Right-click a ref** for branch, remote-branch, tag and stash menus.
+- **Right-click a ref** for branch, remote-branch, tag and stash menus. A pushed
+  branch is one chip — `origin │ main` — with each half acting on its own ref.
 - **Right-click uncommitted changes** to stash, reset, or clean.
 - **In-progress banner** with Abort and Continue when a merge, rebase, cherry-pick
   or revert is mid-flight — something upstream git-graph does not have.

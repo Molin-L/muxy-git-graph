@@ -17,6 +17,8 @@ import { renderGraph } from "./render-graph.ts";
 import { VirtualRows } from "./virtual-rows.ts";
 import { FindWidget } from "./find-widget.ts";
 import { compile, search, segment } from "./find.ts";
+import { combineRefs, remoteOf } from "./refs.ts";
+import type { RefLabel } from "./refs.ts";
 import type { FindOptions } from "./find.ts";
 import { absoluteTime, absoluteTimeWidths, copyToClipboard, el } from "./dom.ts";
 import { ColumnRuler } from "./measure.ts";
@@ -852,13 +854,16 @@ export class Panel {
   private refChips(commit: Commit): HTMLElement[] {
     if (commit.refs.length === 0) return [];
 
-    const ordered = [...commit.refs].sort((a, b) => REF_ORDER[a.kind] - REF_ORDER[b.kind]);
+    // Combined first, so a branch and its remotes count as the one chip they
+    // are drawn as — otherwise a pushed branch alone could trip the `+N`.
+    const ordered = combineRefs(commit.refs, this.remotes)
+      .sort((a, b) => REF_ORDER[a.ref.kind] - REF_ORDER[b.ref.kind]);
     const limit = this.columns.date > 0 ? 3 : this.columns.author > 0 ? 2 : 1;
-    if (ordered.length <= limit + 1) return ordered.map((ref) => this.refChip(ref, commit));
+    if (ordered.length <= limit + 1) return ordered.map((label) => this.refChip(label, commit));
 
     const visible = ordered.slice(0, limit);
-    const hidden = ordered.slice(limit);
-    const chips = visible.map((ref) => this.refChip(ref, commit));
+    const hidden = ordered.slice(limit).flatMap((label) => [label.ref, ...label.remotes]);
+    const chips = visible.map((label) => this.refChip(label, commit));
 
     const more = el("span", "ref ref--more", `+${hidden.length}`);
     more.title = hidden.map((ref) => ref.name).join("\n");
@@ -886,21 +891,43 @@ export class Panel {
     return chips;
   }
 
-  private refChip(ref: Ref, commit: Commit): HTMLElement {
-    const chip = el("span", `ref ref--${ref.kind}`);
-    this.paint(chip, ref.name);
-    chip.title = `${ref.name} — click to copy, right-click for actions`;
-    chip.addEventListener("click", (event) => {
+  /**
+   * One chip. A local branch that is also on a remote is prefixed with the
+   * remote's name — `origin │ main` — reading the way the full ref does, and
+   * that segment acts on the remote branch, so `origin/main` stays as clickable
+   * as it was when it had a chip of its own.
+   */
+  private refChip(label: RefLabel, commit: Commit): HTMLElement {
+    const chip = el("span", `ref ref--${label.ref.kind}`);
+    chip.classList.toggle("ref--combined", label.remotes.length > 0);
+
+    for (const remote of label.remotes) {
+      const segment = el("span", "ref__remote");
+      this.paint(segment, remoteOf(remote.name, this.remotes) ?? remote.name);
+      chip.appendChild(segment);
+      this.bindRef(segment, remote, commit);
+    }
+
+    const name = el("span", "ref__name");
+    this.paint(name, label.ref.name);
+    chip.appendChild(name);
+    this.bindRef(name, label.ref, commit);
+    return chip;
+  }
+
+  /** Copy on click, act on right-click — for a whole chip or one of its parts. */
+  private bindRef(element: HTMLElement, ref: Ref, commit: Commit): void {
+    element.title = `${ref.name} — click to copy, right-click for actions`;
+    element.addEventListener("click", (event) => {
       event.stopPropagation();
       void copyToClipboard(ref.name);
       this.flashStatus(`Copied ${ref.name}`);
     });
-    chip.addEventListener("contextmenu", (event) => {
+    element.addEventListener("contextmenu", (event) => {
       event.preventDefault();
       event.stopPropagation();
       openContextMenu(event.clientX, event.clientY, refMenu(ref, commit, this.actionContext()));
     });
-    return chip;
   }
 
   /* ---------------------------------------------------------- selection --- */
