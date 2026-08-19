@@ -17,6 +17,8 @@
   --radius-card: 8px;
 
   --row-height: 24px;
+  --head-height: 26px;
+  --find-height: 32px;
   --fade-out: 28px;
   --mono: "SF Mono", Menlo, monospace;
 
@@ -81,6 +83,8 @@ body {
   text-overflow: ellipsis;
 }
 
+.topbar__spacer { flex: 1 1 auto; min-width: var(--s2); }
+
 .topbar__repo:empty { display: none; }
 
 .topbar__repo {
@@ -110,6 +114,9 @@ button {
 button:hover:not(:disabled) { background: var(--muxy-hover); border-color: var(--muxy-accent); }
 button:disabled { opacity: 0.4; cursor: default; }
 
+/* A toggle that is currently on — the Find button while its widget is out. */
+.iconbutton--on { color: var(--muxy-accent); background: var(--muxy-accent-soft); }
+
 .iconbutton {
   width: var(--control);
   height: var(--control);
@@ -136,41 +143,56 @@ select, input[type="text"] {
 
 /* ----------------------------------------------------------------- find --- */
 
-/* Lives in the topbar, in place of the spacer, so find costs no vertical space
-   at all. It is the only flexible item there: the labels hold their content and
-   the field absorbs the rest. */
+/* Summoned by the topbar's Find button, and parked above the graph — inside the
+   stage, which clips it — until it is. It drops clear of both the topbar and
+   the column header, so the branch name, Find, Refresh and the column labels
+   all stay legible while a search is open. */
 .find {
+  position: absolute;
+  z-index: 20;
+  top: calc(-1 * (var(--find-height) + var(--s5)));
+  right: var(--s5);
   display: flex;
   align-items: center;
   gap: var(--s2);
-  flex: 1 1 auto;
-  min-width: 0;
+  width: 260px;
+  max-width: calc(100% - 2 * var(--s5));
+  height: var(--find-height);
+  box-sizing: border-box;
+  padding: 0 var(--s3);
+  /* Opaque, and the panel's own background rather than the control surface: it
+     sits on top of the rows, so anything showing through it would be read as
+     part of the commit underneath. A solid border does the separating. */
+  background: var(--muxy-background);
+  border: 1px solid var(--muxy-border);
+  border-radius: var(--radius);
+  transition: top 0.15s linear;
 }
 
-/* Count, toggles and clear all sit inside the field's border, so they read as
-   one control and cost the topbar a single slot. */
+/* Below the column header and its border, with the same gap it keeps from the
+   panel's right edge. */
+.find--open { top: calc(var(--head-height) + 1px + var(--s5)); }
+
+/* Input, count and modifiers, with the widget's own border around them — a box
+   inside the box would be one border too many at this size. */
 .find__field {
   display: flex;
   align-items: center;
   gap: var(--s1);
   flex: 1 1 auto;
   /* The floor lives on the input itself, not here: this box also holds the
-     count and three buttons, so a floor here would still let the text area
+     count and both modifiers, so a floor here would still let the text area
      collapse to nothing. */
   min-width: 0;
-  padding-right: var(--s1);
-  background: var(--muxy-background);
-  border: 1px solid var(--muxy-border);
-  border-radius: var(--radius);
 }
 
-.find__field:focus-within { border-color: var(--muxy-accent); }
-.find--error .find__field { border-color: var(--muxy-diff-remove); }
+.find:focus-within { border-color: var(--muxy-accent); }
+.find--error { border-color: var(--muxy-diff-remove); }
 
 .find__input {
   flex: 1 1 auto;
-  /* Enough to read a short query in. Everything else in the topbar ellipsizes
-     or drops before this gives way. */
+  /* Enough to read a short query in. The count and the modifiers hold their
+     size, so this is what absorbs a panel narrower than the widget's width. */
   min-width: 64px;
   height: 22px;
   padding: 0 var(--s3);
@@ -201,7 +223,7 @@ select, input[type="text"] {
 .find__toggle:hover:not(:disabled) { background: var(--muxy-hover); border-color: transparent; }
 .find__toggle--on { background: var(--muxy-accent-soft); color: var(--muxy-accent); }
 
-/* Costs nothing until there is a query — the idle topbar is just a search box. */
+/* Costs nothing until there is a query, so an idle widget is just an input. */
 .find__status:empty { display: none; }
 
 .find__status {
@@ -214,14 +236,6 @@ select, input[type="text"] {
 }
 
 .find--error .find__status { color: var(--muxy-diff-remove); }
-
-.find__step { flex: 0 0 auto; width: 20px; height: 20px; font-size: var(--font-footnote); }
-.find__step:hover:not(:disabled) { background: var(--muxy-hover); }
-.find__clear { font-size: var(--font-footnote); }
-
-/* Narrow panel: the steppers are the one part of find with a keyboard
-   equivalent, so they are what goes. */
-.root--tight .find__step { display: none; }
 
 /* Matched text inside a row cell. Painted per row as it scrolls in. The explicit
    colour is for the Author and Commit cells, whose text is muted — a hit there
@@ -276,6 +290,11 @@ select, input[type="text"] {
 
 /* ---------------------------------------------------------------- graph --- */
 
+/* The graph area. It exists to anchor the find widget: `relative` gives the
+   widget a box to be positioned against, and `hidden` clips it out of sight
+   while it is parked above the graph. */
+.stage { flex: 1 1 auto; min-height: 0; display: flex; position: relative; overflow: hidden; }
+
 .scroller { flex: 1 1 auto; overflow: auto; position: relative; }
 .content { position: relative; width: 100%; }
 
@@ -299,7 +318,7 @@ select, input[type="text"] {
   position: sticky;
   top: 0;
   z-index: 3;
-  height: 26px;
+  height: var(--head-height);
   padding-right: var(--s5);
   border-bottom: 1px solid var(--muxy-border);
   background: var(--muxy-background);

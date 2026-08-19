@@ -150,7 +150,7 @@ export class Panel {
   }
 
   async start(): Promise<void> {
-    // Restores run first so the find bar is built with the user's last toggles
+    // Restores run first so the find widget is built with the user's last toggles
     // rather than being retrofitted with them a frame later.
     await Promise.all([this.restoreSplit(), this.restoreDetailsCache(), this.restoreFindOptions(),
       this.restoreFileView(), this.restoreProjects()]);
@@ -360,6 +360,7 @@ export class Panel {
   /* ------------------------------------------------------------- chrome --- */
 
   private build(): void {
+    const findButton = iconButton("Find commits (⌘F)", "⌕", () => this.find?.toggle());
     const refreshButton = iconButton("Fetch from remotes and refresh (⌘R)", "⟳",
       () => void this.refresh());
 
@@ -388,15 +389,24 @@ export class Panel {
         this.findOptions = options;
         void globalThis.muxy?.storage.set("find.options", options).catch(() => undefined);
       },
+      // The button is the widget's close control as well as its opener, so it
+      // has to read as pressed while the widget is out.
+      visibilityChanged: (open) => findButton.classList.toggle("iconbutton--on", open),
     }, this.findOptions);
 
-    // The find field takes the spacer's role, so it absorbs whatever width the
-    // labels and buttons do not need.
-    topbar.append(this.branchLabel, this.statusLabel, this.find.element,
-      refreshButton);
+    // A spacer, not a stretched status label: the label hides itself when it has
+    // nothing to say, and the buttons belong on the right either way.
+    topbar.append(this.branchLabel, this.statusLabel, el("div", "topbar__spacer"),
+      findButton, refreshButton);
 
     this.notice.hidden = true;
-    this.root.append(topbar, this.banner, this.notice, this.scroller);
+    // The find widget shares a stage with the scroller: anchored to the graph
+    // area rather than to the panel, so it lands under the column header
+    // whether or not a banner is pushing the graph down, and the stage's
+    // clipping is what hides it when it slides back out.
+    const stage = el("div", "stage");
+    stage.append(this.scroller, this.find.element);
+    this.root.append(topbar, this.banner, this.notice, stage);
 
     // After the append: the ruler reads computed styles, which need the panel
     // to be in the document. Measured straight away so the header is laid out
@@ -493,10 +503,6 @@ export class Panel {
     // Summary and files sit side by side only when there is room for both.
     this.detailsHost.classList.toggle("details--split", width >= 520);
 
-    // Below this the find field is squeezed to a couple of characters. The
-    // steppers go rather than the input — ⏎ and ⇧⏎ still walk the matches.
-    this.root.classList.toggle("root--tight", width < 400);
-
     const style = this.root.style;
     style.setProperty("--col-graph", `${graph}px`);
     style.setProperty("--col-date", `${date}px`);
@@ -550,8 +556,8 @@ export class Panel {
           : "No commits matched. The repository may be empty or unreachable.");
       } else if (repo.isDegraded()) {
         // Reading through muxy.git, as Muxy's own git extension does on a remote.
-        // Terse: the topbar is shared with the find field now, and the whole
-        // explanation is one hover away.
+        // Terse: the topbar has to hold a branch name and two buttons beside
+        // this, and the whole explanation is one hover away.
         this.statusLabel.textContent = "read-only";
         this.statusLabel.title =
           "muxy.exec runs on the machine hosting Muxy, so it cannot reach this " +
@@ -1048,9 +1054,10 @@ export class Panel {
 
   /* --------------------------------------------------------------- find --- */
 
-  /** ⌘F does not summon the bar — it is always there — it just takes you to it. */
-  private focusFind(): void {
-    this.find?.focus();
+  /** ⌘F and the topbar's Find button are the same door: both summon the widget,
+   *  and pressing ⌘F on an open one selects the query rather than doing nothing. */
+  private openFind(): void {
+    this.find?.show();
   }
 
   /**
@@ -1360,16 +1367,16 @@ export class Panel {
 
     if (event.key === "Escape") {
       closeContextMenu();
-      // Innermost first: an active search is discarded before the details pane,
-      // so one Escape never dismisses both.
-      if (this.find?.clear() !== true && (this.selected !== null || this.compareWith !== null)) {
+      // Innermost first: an open find widget is dismissed before the details
+      // pane, so one Escape never closes both.
+      if (this.find?.close() !== true && (this.selected !== null || this.compareWith !== null)) {
         this.closeDetails();
       }
       return;
     }
     if (meta && is("f")) {
       claim();
-      this.focusFind();
+      this.openFind();
       return;
     }
     if (meta && is("g")) {

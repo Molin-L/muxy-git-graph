@@ -20,7 +20,7 @@ Rendering-time highlighting then falls out for free. A row scrolled into view is
 painted from data that already knows the active pattern, so it arrives
 highlighted. There is no highlight state to install, and none to tear down: the
 `clearMatches` half of upstream's problem does not exist, because closing the
-find bar drops the pattern and the next render writes plain `textContent`.
+find widget drops the pattern and the next render writes plain `textContent`.
 
 ## Consequences
 
@@ -43,17 +43,27 @@ find bar drops the pattern and the next render writes plain `textContent`.
   mid-walk. Upstream searches everything, notices `.*` produced empty matches,
   then throws the results away. Here `.*` never gets a result set: it would
   report every commit as a match while highlighting nothing.
-- **The field is permanent, not summoned, and it lives in the topbar.** `⌘F` is a
-  chord a panel webview competes with the host for; it reached this panel
-  unreliably in practice, and a find that only exists once the chord lands is one
-  some users never find at all. A field that is simply always there makes the
-  shortcut a convenience. `⌘F` moves focus to it, and Escape clears the query
-  rather than hiding anything. Putting it beside Fetch and Refresh rather than in
-  a row of its own costs no vertical space, at the price of a topbar that has to
-  degrade: the status label ellipsizes first, then the match steppers drop below
-  400px (`⏎`/`⇧⏎` still work), and the branch name and a readable input are the
-  last things standing.
+- **The widget is summoned, as it is upstream, but from a button as well as from
+  `⌘F`.** An earlier revision kept the field permanently in the topbar, reasoning
+  that `⌘F` is a chord a panel webview competes with the host for, and that a find
+  which only exists once the chord lands is one some users never find at all. The
+  button answers that objection without the cost: it is always visible, so find is
+  still discoverable by eye, and the widget itself is then free to be a readable
+  input with both modifiers and the match count beside it, because it borrows the
+  graph's top-right corner instead of sharing the topbar with the branch name and
+  the status.
+- **It clears the topbar and the column header, and carries neither a ✕ nor
+  steppers.** Upstream lands its widget on its control bar and gives it a ✕ and a
+  pair of match arrows. None of the three survives a right panel. Covering the
+  topbar would take the branch name and Refresh with it, so the widget floats
+  inside the graph area rather than the panel — which also keeps it below the
+  column header when a banner pushes the graph down. The ✕ and the arrows are
+  width spent on controls the user already has: the Find button toggles and shows
+  pressed while the widget is out, and `⏎`/`⇧⏎` (or `⌘G`/`⇧⌘G`) walk the matches,
+  which the input's tooltip says. What is left — the input, `Aa`, `.*` and the
+  count — is what nothing else can do, and it fits at 260px with the input still
+  the part that grows.
 - Stepping through matches scrolls and rings the row, but does not select it.
   Selecting would open the Commit Details pane, and on a remote workspace each
   open is a round trip (ADR-0017) — upstream reaches the same default from the
-  same reasoning, and puts it behind a toggle we have no room for.
+  same reasoning, and puts it behind a toggle this widget does not carry.
