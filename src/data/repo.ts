@@ -147,11 +147,50 @@ type Transport =
 
 let transportMode: Transport = { kind: "direct" };
 
+/**
+ * The submodule the panel is pointed at, absolute — null for the worktree Muxy
+ * has active. Every command below runs here rather than at the worktree root, so
+ * a submodule is a *scope* over the existing transport rather than a second
+ * repository the panel knows how to reach (ADR-0021).
+ */
+let scopePath: string | null = null;
+
+/** True while the ladder is running. Probing has to reach the worktree Muxy
+ *  reports — its whole job is deciding how — so the scope is suspended for it. */
+let probing = false;
+
+/** Where a command should run: the scope if there is one, the worktree if not. */
+function target(): string | null {
+  if (!probing && scopePath !== null) return scopePath;
+  return transportMode.kind === "direct" ? null : transportMode.path;
+}
+
+/** The submodule in scope, or null at the top level. */
+export function scope(): string | null {
+  return scopePath;
+}
+
+/**
+ * Points every subsequent command at `path`, or back at the worktree with null.
+ * The panel owns which; nothing here decides it, and nothing else may set it,
+ * because a scope that outlives the graph it was chosen for would show one
+ * repository's history while acting on another's.
+ */
+export function setScope(path: string | null): void {
+  if (path === scopePath) return;
+  log.info("scope changed", { was: scopePath, now: path });
+  scopePath = path;
+}
+
 function transport(
   command: string[] | { shell: string },
 ): string[] | { shell: string; cwd?: string } {
+  const path = target();
   switch (transportMode.kind) {
     case "direct":
+      // Muxy spawns in the project, so an unscoped direct command is already in
+      // the right place; a scoped one has to say where it is going.
+      return path === null ? command : bindToRepo(command, path);
     case "background":
       return command;
     case "shellCwd":
@@ -159,8 +198,8 @@ function transport(
         // `cwd` must live inside this object, not beside it.
         cwd: SAFE_CWD,
         shell: Array.isArray(command)
-          ? remote.shellCommand(command, transportMode.path)
-          : remote.shellScript(command.shell, transportMode.path),
+          ? remote.shellCommand(command, path ?? transportMode.path)
+          : remote.shellScript(command.shell, path ?? transportMode.path),
       };
   }
 }
@@ -217,7 +256,7 @@ function execOnce(command: string[] | { shell: string }): Promise<ExecResult> {
   // ids already correlated correctly, but a bare `git log` would run in the
   // host's ambient workspace.
   if (transportMode.kind === "background") {
-    return execViaBackground(bindToRepo(command, transportMode.path));
+    return execViaBackground(bindToRepo(command, target() ?? transportMode.path));
   }
 
   const label = Array.isArray(command) ? command.join(" ") : command.shell;
@@ -448,7 +487,11 @@ let probeInFlight: Promise<boolean> | null = null;
 /** Concurrent readers must share one probe, not race four of them. */
 function probeExec(): Promise<boolean> {
   if (execUsable !== null) return Promise.resolve(execUsable);
-  probeInFlight ??= runProbe().finally(() => { probeInFlight = null; });
+  probing = true;
+  probeInFlight ??= runProbe().finally(() => {
+    probeInFlight = null;
+    probing = false;
+  });
   return probeInFlight;
 }
 
@@ -620,6 +663,10 @@ export interface RepoSnapshot {
  */
 export async function loadSnapshot(maxCount: number): Promise<RepoSnapshot> {
   if (!(await probeExec())) {
+    // muxy.git answers about the worktree Muxy has active and takes no path, so
+    // there is no degraded reading of a submodule — only the parent's history
+    // wearing the submodule's name, which is worse than an error.
+    if (scopePath !== null) throw degradedError("Viewing a submodule");
     const [state, digest] = await Promise.all([loadViaApi(maxCount), refDigest()]);
     return { state, remotes: [], pending: null, digest };
   }
@@ -1114,6 +1161,43 @@ export async function localBranches(): Promise<string[]> {
   return (out ?? "").split("\n").filter((s) => s.trim() !== "");
 }
 
+/** An initialised submodule of the active worktree. */
+export interface Submodule {
+  /** Path relative to the worktree root — what the user recognises. */
+  readonly path: string;
+  /** Absolute path, which is what a scope is set to. */
+  readonly root: string;
+}
+
+/**
+ * The submodules that can actually be opened, deepest paths included.
+ *
+ * `vscode-git-graph` parses `.gitmodules` and resolves each `path =` entry to a
+ * repository root, adding the ones that resolve to its repository list. The file
+ * is the wrong source here: it lists submodules that were never initialised,
+ * which have no history to show, and it would cost a round trip per entry to
+ * find out which (ADR-0017). `submodule foreach` visits exactly the initialised
+ * ones, in one command, and prints paths NUL-separated so a submodule under a
+ * directory with a space in it survives the trip.
+ *
+ * Always asked at the worktree root: run inside a scope, `foreach` would answer
+ * about that submodule's own submodules rather than the repository's.
+ */
+export async function submodules(): Promise<Submodule[]> {
+  if (!(await probeExec())) return [];
+  const root = await projectPath();
+  if (root === null) return [];
+  const out = await tryRun([
+    "git", "-C", root, "submodule", "foreach", "--quiet", "--recursive",
+    'printf "%s\\0" "$displaypath"',
+  ]);
+  if (out === null) return [];
+  return out.split("\0")
+    .map((path) => path.trim())
+    .filter((path) => path !== "")
+    .map((path) => ({ path, root: `${root.replace(/\/$/, "")}/${path}` }));
+}
+
 export async function remotes(): Promise<string[]> {
   if (!(await probeExec())) return [];
   const out = await tryRun(["git", "remote"]);
@@ -1123,17 +1207,48 @@ export async function remotes(): Promise<string[]> {
 /* --------------------------------------------------------------- writes --- */
 /* muxy.git where the operation exists (named consent prompts), exec otherwise. */
 
+/**
+ * `muxy.git` takes no path: every operation it offers lands on the worktree Muxy
+ * has active. In a submodule scope that is the wrong repository — a checkout
+ * meant for the submodule would move the parent's HEAD — so the scope trades the
+ * named consent prompt for plain git, which the transport already puts in the
+ * right place.
+ */
+function scoped(argv: readonly string[], native: () => Promise<void>): Promise<unknown> {
+  return scopePath === null ? native() : run([...argv]);
+}
+
+/** `git push --delete` wants the remote and the branch apart, and only the
+ *  repository's own remote list says where `origin/feature/x` divides. */
+async function deleteRemoteBranchViaExec(branch: string): Promise<void> {
+  const known = await remotes();
+  const remote = known.find((name) => branch.startsWith(`${name}/`))
+    ?? branch.slice(0, Math.max(branch.indexOf("/"), 0));
+  if (remote === "") throw new Error(`${branch} does not name a remote`);
+  await run(["git", "push", "--delete", remote, branch.slice(remote.length + 1)]);
+}
+
 export const write = {
-  checkoutCommit: (hash: string) => api().git.checkout({ hash }),
-  checkoutBranch: (branch: string) => api().git.branch.switchTo({ branch }),
-  cherryPick: (hash: string) => api().git.cherryPick({ hash }),
-  revert: (hash: string) => api().git.revert({ hash }),
-  createBranch: (name: string) => api().git.branch.create({ name }),
-  deleteBranch: (name: string, force: boolean) => api().git.branch.delete({ name, force }),
-  deleteRemoteBranch: (branch: string) => api().git.branch.deleteRemote({ branch }),
-  createTag: (name: string, hash: string) => api().git.tag.create({ name, hash }),
-  push: () => api().git.push(),
-  pull: () => api().git.pull(),
+  checkoutCommit: (hash: string) =>
+    scoped(["git", "checkout", hash], () => api().git.checkout({ hash })),
+  checkoutBranch: (branch: string) =>
+    scoped(["git", "checkout", branch], () => api().git.branch.switchTo({ branch })),
+  cherryPick: (hash: string) =>
+    scoped(["git", "cherry-pick", hash], () => api().git.cherryPick({ hash })),
+  revert: (hash: string) =>
+    scoped(["git", "revert", hash], () => api().git.revert({ hash })),
+  createBranch: (name: string) =>
+    scoped(["git", "branch", name], () => api().git.branch.create({ name })),
+  deleteBranch: (name: string, force: boolean) =>
+    scoped(["git", "branch", force ? "-D" : "-d", name],
+      () => api().git.branch.delete({ name, force })),
+  deleteRemoteBranch: (branch: string) => scopePath === null
+    ? api().git.branch.deleteRemote({ branch })
+    : deleteRemoteBranchViaExec(branch),
+  createTag: (name: string, hash: string) =>
+    scoped(["git", "tag", name, hash], () => api().git.tag.create({ name, hash })),
+  push: () => scoped(["git", "push"], () => api().git.push()),
+  pull: () => scoped(["git", "pull"], () => api().git.pull()),
 
   // No muxy.git equivalent — these fall through to exec.
   branchAt: (name: string, hash: string) => run(["git", "branch", name, hash]),

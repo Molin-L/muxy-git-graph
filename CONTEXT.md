@@ -87,6 +87,14 @@ A repository registered in Muxy's sidebar. The unit `muxy.git` targets by defaul
 A checkout belonging to a Project. A Project always has an active Worktree, and all
 git reads and writes are scoped to it.
 
+**Scope**:
+The submodule the panel is currently pointed at — a path inside the active
+Worktree that every git command runs at instead of its root. Null means the
+Worktree itself. A submodule is a Scope rather than a Project, because Muxy's
+sidebar owns what a Project is and does not know submodules exist
+(see [ADR-0021](./docs/adr/0021-a-submodule-is-a-scope-not-a-project.md)).
+_Avoid_: sub-repo, nested project, context
+
 **Extension Output**:
 Muxy's panel for extension logs, shared by every installed extension. Muxy feeds it
 by wrapping `console` in each surface, so it is where every line this extension

@@ -1,7 +1,7 @@
 import "../styles/global.css";
 import "./diff.css";
 import * as log from "../log.ts";
-import { comparisonDiff, fileDiff } from "../data/repo.ts";
+import { comparisonDiff, fileDiff, setScope } from "../data/repo.ts";
 import { noHunkSummary, parseUnifiedDiff, toSplitRows } from "./parse.ts";
 import type { DiffFile, DiffRow } from "./parse.ts";
 import { el } from "../view/dom.ts";
@@ -13,6 +13,9 @@ interface DiffTabData {
   readonly shortHash?: string;
   readonly from?: string;
   readonly to?: string;
+  /** The submodule the panel was showing, absolute; absent at the top level.
+   *  This surface runs its own transport, so it has to be told (ADR-0021). */
+  readonly scope?: string | null;
 }
 
 type Style = "unified" | "split";
@@ -53,6 +56,7 @@ async function start(host: HTMLElement): Promise<void> {
 
   const load = async (next: DiffTabData): Promise<void> => {
     data = next;
+    setScope(data.scope ?? null);
     title.textContent = data.path ?? "Diff";
     title.title = data.path ?? "";
     source.textContent = data.from && data.to

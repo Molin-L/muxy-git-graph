@@ -36,6 +36,9 @@ supported.
 - **Right-click uncommitted changes** to stash, reset, or clean.
 - **In-progress banner** with Abort and Continue when a merge, rebase, cherry-pick
   or revert is mid-flight — something upstream git-graph does not have.
+- **Submodules** fill a topbar selector when the repository has any, defaulting to
+  the repository itself. The whole panel — graph, details, diffs and writes —
+  follows whichever you pick.
 - **A find widget** toggled from the topbar, dropping into the graph's top-right
   corner — type and matches highlight as you go, across subjects, authors, hashes,
   branch and tag names, dates and stash selectors, with match-case and regex
@@ -72,11 +75,11 @@ npm run typecheck
 | `src/diff/` | Diff tab and unified-diff parser. |
 | `src/log.ts` | The log, which is `console`, which is Muxy's Extension Output panel. |
 | `docs/adr/` | Why everything is the way it is. Read `0001` first. |
-| `CONTEXT.md` | Glossary. Lane, Vertex, Ref, Commit Feed, Graph Tab. |
+| `CONTEXT.md` | Glossary. Lane, Vertex, Ref, Scope, Commit Feed, Graph Tab. |
 
 ## Design decisions
 
-Twenty ADRs in [`docs/adr/`](./docs/adr/). The ones that will surprise you:
+Twenty-one ADRs in [`docs/adr/`](./docs/adr/). The ones that will surprise you:
 
 - **[0002](./docs/adr/0002-data-layer-split.md)** — reads go through `muxy.exec`,
   writes through `muxy.git`. Split by intent, not capability.

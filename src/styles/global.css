@@ -130,6 +130,22 @@ button:disabled { opacity: 0.4; cursor: default; }
   border: none;
 }
 
+/* The repository selector, present only where a repository has submodules. Sized
+   to the topbar's buttons rather than to the taller form control the base rule
+   describes, and capped so a deep submodule path cannot crowd out the branch. */
+.topbar__scope {
+  height: var(--control);
+  max-width: 132px;
+  flex: 0 1 auto;
+  min-width: 0;
+  padding: 0 var(--s2);
+  font-size: var(--font-footnote);
+}
+
+/* Showing a submodule rather than the repository itself. Everything else in the
+   panel looks identical in both, so this is the only standing sign of it. */
+.topbar__scope--sub { color: var(--muxy-accent); border-color: var(--muxy-accent); }
+
 select, input[type="text"] {
   height: 28px;
   padding: 0 var(--s3);

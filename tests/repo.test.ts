@@ -937,3 +937,100 @@ test("background commands stay pinned when the host's ambient workspace changes"
     repo.resetCapabilities();
   }
 });
+
+/**
+ * A submodule is a scope over the same transport (ADR-0021), which is only true
+ * if every read actually lands inside it. That is not observable from the panel
+ * — both repositories render as a graph — so it is asserted here, against a real
+ * submodule, including one under a path with a space in it.
+ */
+test("a submodule can be listed and scoped to, and reads land inside it", async () => {
+  const repo = await import("../src/data/repo.ts");
+  const parent = fs.mkdtempSync(path.join(os.tmpdir(), "git-graph-super-"));
+  const previous = dir;
+  const at = (cwd: string, ...args: string[]): string =>
+    execFileSync("git", args, { cwd, encoding: "utf8" });
+
+  try {
+    const inner = path.join(parent, "src");
+    fs.mkdirSync(inner);
+    at(inner, "init", "--initial-branch=main");
+    at(inner, "config", "user.name", "Sub User");
+    at(inner, "config", "user.email", "sub@example.com");
+    fs.writeFileSync(path.join(inner, "s.txt"), "sub\n");
+    at(inner, "add", "."); at(inner, "commit", "-m", "a commit only the submodule has");
+
+    const host = path.join(parent, "host");
+    fs.mkdirSync(host);
+    at(host, "init", "--initial-branch=main");
+    at(host, "config", "user.name", "Host User");
+    at(host, "config", "user.email", "host@example.com");
+    fs.writeFileSync(path.join(host, "h.txt"), "host\n");
+    at(host, "add", "."); at(host, "commit", "-m", "a commit only the host has");
+    // Paths with spaces are the case `git submodule status` cannot be parsed for.
+    at(host, "-c", "protocol.file.allow=always", "submodule", "add", "-q", inner, "vendor/lib one");
+    at(host, "commit", "-m", "add the submodule");
+
+    dir = host;
+    repo.resetCapabilities();
+
+    const found = await repo.submodules();
+    assert.deepEqual(found.map((s) => s.path), ["vendor/lib one"], "initialised submodules only");
+    assert.equal(found[0].root, `${host}/vendor/lib one`);
+
+    const top = await repo.loadCommits(10);
+    assert.deepEqual(top.commits.map((c) => c.subject),
+      ["add the submodule", "a commit only the host has"]);
+
+    repo.setScope(found[0].root);
+    assert.equal(repo.scope(), found[0].root);
+    const scoped = await repo.loadCommits(10);
+    assert.deepEqual(scoped.commits.map((c) => c.subject),
+      ["a commit only the submodule has"], "the graph is the submodule's own history");
+    assert.notEqual(scoped.head, top.head, "and its HEAD is its own");
+
+    // The details pane and the diff tab read through the same scope, so they
+    // have to see the submodule's own files rather than the host's.
+    const details = await repo.commitDetails(scoped.head!);
+    assert.deepEqual(details.files.map((f) => f.path), ["s.txt"]);
+    assert.match(await repo.fileDiff(scoped.head!, "s.txt"), /\+sub/);
+
+    // Writes are the dangerous half: muxy.git takes no path, so a scope that
+    // did not leave it would move the *parent's* HEAD instead.
+    await repo.write.createBranch("from-the-submodule");
+    assert.match(at(`${host}/vendor/lib one`, "branch", "--list"), /from-the-submodule/,
+      "the branch lands in the submodule");
+    assert.doesNotMatch(at(host, "branch", "--list"), /from-the-submodule/,
+      "and not in the repository that contains it");
+
+    repo.setScope(null);
+    const back = await repo.loadCommits(10);
+    assert.deepEqual(back.commits.map((c) => c.subject), top.commits.map((c) => c.subject),
+      "clearing the scope returns to the worktree");
+  } finally {
+    repo.setScope(null);
+    dir = previous;
+    repo.resetCapabilities();
+    fs.rmSync(parent, { recursive: true, force: true });
+  }
+});
+
+test("a submodule cannot be read through muxy.git, and says so", async () => {
+  const repo = await import("../src/data/repo.ts");
+  const muxy = (globalThis as Record<string, unknown>).muxy as Record<string, unknown>;
+  const realExec = muxy.exec;
+
+  repo.resetCapabilities();
+  muxy.exec = () => Promise.reject(new Error("exec failed to launch: spawn process: No such file or directory"));
+  try {
+    // Degrade first, then scope: muxy.git takes no path, so answering with the
+    // parent's history under the submodule's name is the one outcome to refuse.
+    await repo.loadCommits(10).catch(() => undefined);
+    repo.setScope("/wherever/vendor/lib");
+    await assert.rejects(() => repo.loadCommits(10), /shell access/);
+  } finally {
+    repo.setScope(null);
+    muxy.exec = realExec;
+    repo.resetCapabilities();
+  }
+});

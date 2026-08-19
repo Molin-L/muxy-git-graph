@@ -144,8 +144,18 @@ export class Panel {
    * latency for an answer that usually has not changed. See ADR-0019.
    */
   private readonly projects = new Map<string, ProjectCache>();
-  /** Which project `state` describes; null until the first resolve. */
+  /** Which project *and scope* `state` describes; null until the first resolve. */
   private projectKey: string | null = null;
+  /** The active worktree root, which is what the scope hangs off. */
+  private worktreeKey: string | null = null;
+  /** The submodule in scope, absolute, or null at the top level (ADR-0021). */
+  private scopePath: string | null = null;
+  /** What the switcher offers, discovered once per worktree after it paints. */
+  private submodules: readonly repo.Submodule[] = [];
+  /** Which submodule each worktree was last pointed at, for the session. A scope
+   *  is a place you are working, not a setting, so it does not outlive the app. */
+  private readonly scopeChoice = new Map<string, string>();
+  private readonly scopeSelect = el("select", "topbar__scope");
 
   constructor(root: HTMLElement) {
     this.root = root;
@@ -167,27 +177,127 @@ export class Panel {
    * not is read the slow way, which is the only time the user waits.
    */
   private async openProject(): Promise<void> {
-    const key = await repo.workspaceKey().catch(() => null);
-    if (key !== null && key === this.projectKey) {
+    const worktree = await repo.workspaceKey().catch(() => null);
+    if (worktree !== null && worktree === this.worktreeKey) {
       await this.reload();
       return;
     }
 
     this.remember();
     repo.rebindWorkspace();
-    this.projectKey = key;
+    // A scope belongs to the worktree it was chosen in: carrying one across a
+    // project switch would point the next repository's reads at a path inside
+    // the previous one. A transport re-test (⌘R) deliberately does not.
+    repo.setScope(null);
+    this.worktreeKey = worktree;
+    this.scopePath = null;
+    this.submodules = [];
+    this.syncScopeSelect();
+    this.projectKey = scopeKey(worktree, null);
 
-    const cached = key === null ? undefined : this.projects.get(key);
-    log.info("binding to project", { key, warm: cached !== undefined });
+    const cached = this.projects.get(this.projectKey) ?? undefined;
+    log.info("binding to project", { key: this.projectKey, warm: cached !== undefined });
     if (cached === undefined) {
       // Nothing to show for this project yet — and what is on screen belongs to
       // the previous one, so clear it rather than leave the wrong repository up.
       this.adopt(EMPTY_CACHE);
       await this.reload();
+    } else {
+      this.adopt(cached);
+      await this.revalidate(cached.digest);
+    }
+    await this.discoverSubmodules();
+  }
+
+  /* ----------------------------------------------------------- submodules --- */
+
+  /**
+   * Asked once per worktree, and only after its graph is on screen: it is one
+   * more round trip (ADR-0017), and nothing about it belongs on the path the
+   * user is waiting behind. A repository with no submodules never learns it has
+   * a switcher, because there is nothing to switch to.
+   */
+  private async discoverSubmodules(): Promise<void> {
+    const worktree = this.worktreeKey;
+    try {
+      const found = await repo.submodules();
+      if (worktree !== this.worktreeKey) return;
+      this.submodules = found;
+      log.info("submodules discovered", { worktree, count: found.length });
+      this.syncScopeSelect();
+
+      // A scope chosen earlier this session is restored, but only if the
+      // submodule is still there — one that has been deinitialised has no
+      // history to show.
+      const wanted = worktree === null ? undefined : this.scopeChoice.get(worktree);
+      const match = found.find((sub) => sub.root === wanted);
+      if (match !== undefined) await this.enterScope(match.root);
+    } catch (err) {
+      if (worktree !== this.worktreeKey) return;
+      log.warn("could not list submodules", { worktree, error: log.reason(err) });
+    }
+  }
+
+  /**
+   * Points the panel at a submodule, or back at the worktree with null. The
+   * graph, the details pane, the diff tab and every write follow, because they
+   * all go through the one transport the scope is set on (ADR-0021).
+   */
+  private async enterScope(path: string | null): Promise<void> {
+    if (path === this.scopePath) return;
+    this.remember();
+    this.scopePath = path;
+    repo.setScope(path);
+    if (this.worktreeKey !== null) {
+      if (path === null) this.scopeChoice.delete(this.worktreeKey);
+      else this.scopeChoice.set(this.worktreeKey, path);
+    }
+    this.projectKey = scopeKey(this.worktreeKey, path);
+    this.syncScopeSelect();
+
+    const cached = this.projects.get(this.projectKey);
+    log.info("entering scope", { path, warm: cached !== undefined });
+    if (cached === undefined) {
+      this.adopt(EMPTY_CACHE);
+      await this.reload();
+    } else {
+      this.adopt(cached);
+      await this.revalidate(cached.digest);
+    }
+  }
+
+  /**
+   * The repository the panel is showing, as a selector whose default is the
+   * worktree itself — the shape `vscode-git-graph` gives its repository
+   * dropdown. It appears only where there is somewhere to switch to: a
+   * repository without submodules has one option, which is not a choice.
+   */
+  private syncScopeSelect(): void {
+    this.scopeSelect.hidden = this.submodules.length === 0;
+    if (this.submodules.length === 0) {
+      this.scopeSelect.replaceChildren();
       return;
     }
-    this.adopt(cached);
-    await this.revalidate(cached.digest);
+
+    // Grouped, not just listed: the repository and the things checked out inside
+    // it are different kinds of entry, and a flat list of names says they are
+    // the same kind. The group labels are what say which is which.
+    const repository = option(lastSegment(this.worktreeKey ?? "") || "Repository",
+      "", this.worktreeKey ?? "");
+    this.scopeSelect.replaceChildren(
+      group("Repository", [repository]),
+      group("Submodules", this.submodules.map((sub) => option(sub.path, sub.root, sub.root))),
+    );
+
+    // Set after the options exist, or the assignment finds nothing to select.
+    this.scopeSelect.value = this.scopePath ?? "";
+    const scoped = this.scopeSelect.value !== "";
+    // The closed control shows one name and no group, so the colour is what
+    // carries "this is not the repository Muxy has open" at a glance.
+    this.scopeSelect.classList.toggle("topbar__scope--sub", scoped);
+    this.scopeSelect.title = scoped
+      ? `Showing the submodule ${this.scopeSelect.value}`
+      : `Showing the repository ${this.worktreeKey ?? ""}`;
   }
 
   /**
@@ -362,6 +472,12 @@ export class Panel {
   /* ------------------------------------------------------------- chrome --- */
 
   private build(): void {
+    this.scopeSelect.hidden = true;
+    this.scopeSelect.addEventListener("change", () => {
+      void this.enterScope(this.scopeSelect.value === "" ? null : this.scopeSelect.value);
+    });
+    this.syncScopeSelect();
+
     const findButton = iconButton("Find commits (⌘F)", "⌕", () => this.find?.toggle());
     const refreshButton = iconButton("Fetch from remotes and refresh (⌘R)", "⟳",
       () => void this.refresh());
@@ -399,7 +515,7 @@ export class Panel {
     // A spacer, not a stretched status label: the label hides itself when it has
     // nothing to say, and the buttons belong on the right either way.
     topbar.append(this.branchLabel, this.statusLabel, el("div", "topbar__spacer"),
-      findButton, refreshButton);
+      this.scopeSelect, findButton, refreshButton);
 
     this.notice.hidden = true;
     // The find widget shares a stage with the scroller: anchored to the graph
@@ -1222,9 +1338,14 @@ export class Panel {
           id: muxy.extensionID,
           tabType: "diff-viewer",
           singleton: true,
+          // The tab is its own surface with its own transport, so the scope
+          // travels in the payload — without it a submodule's file would be
+          // diffed against the parent repository, where it does not exist.
           data: comparison !== null
-            ? { path: file.path, oldPath: file.oldPath, from: comparison.from, to: comparison.to }
-            : { path: file.path, oldPath: file.oldPath, hash, shortHash: hash.slice(0, 8) },
+            ? { path: file.path, oldPath: file.oldPath, from: comparison.from, to: comparison.to,
+              scope: this.scopePath }
+            : { path: file.path, oldPath: file.oldPath, hash, shortHash: hash.slice(0, 8),
+              scope: this.scopePath },
         },
       });
     } catch (err) {
@@ -1256,6 +1377,9 @@ export class Panel {
   private async refresh(): Promise<void> {
     repo.resetCapabilities();
     await this.perform("Fetch", () => write.fetch(true));
+    // The one place a submodule added since the project opened can appear: the
+    // list is otherwise read once per worktree, on purpose (ADR-0021).
+    await this.discoverSubmodules();
   }
 
   private async perform(label: string, operation: () => Promise<unknown>): Promise<void> {
@@ -1460,6 +1584,35 @@ function skeletonDetails(commit: Commit): CommitDetails {
     body: commit.subject,
     files: [],
   };
+}
+
+/**
+ * What a graph is cached and stored under: the worktree, plus the submodule if
+ * one is in scope. Two scopes of the same worktree are two repositories with
+ * two histories, so they cannot share a warm graph or a details cache.
+ */
+function scopeKey(worktree: string | null, scope: string | null): string {
+  return `${worktree ?? ""}\u0000${scope ?? ""}`;
+}
+
+function option(label: string, value: string, title: string): HTMLOptionElement {
+  const element = el("option", "", label);
+  element.value = value;
+  element.title = title;
+  return element;
+}
+
+function group(label: string, options: readonly HTMLOptionElement[]): HTMLOptGroupElement {
+  const element = el("optgroup");
+  element.label = label;
+  element.append(...options);
+  return element;
+}
+
+/** The tail of a path, which is what identifies a submodule at a glance. */
+function lastSegment(path: string): string {
+  const parts = path.split("/").filter((part) => part !== "");
+  return parts[parts.length - 1] ?? path;
 }
 
 function iconButton(title: string, glyph: string, run: () => void): HTMLElement {

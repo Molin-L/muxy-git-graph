@@ -36,3 +36,8 @@ management — fall back to `exec`.
   manage.
 - The split is genuinely surprising on first read (`exec` for log, `muxy.git` for
   revert), which is why it is recorded here.
+- The write half holds only while the panel is showing the active worktree.
+  `muxy.git` takes no path, so a submodule scope has to give up the consent
+  prompts and run those operations through `exec` as well, or they would land on
+  the containing repository
+  ([ADR-0021](./0021-a-submodule-is-a-scope-not-a-project.md)).
